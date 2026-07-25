@@ -6,6 +6,7 @@ const registerRoomHandlers = require("./handlers/roomHandler");
 const registerMessageHandlers = require("./handlers/messageHandler");
 const registerPresenceHandlers = require("./handlers/presenceHandler");
 const registerTypingHandlers = require("./handlers/typingHandler");
+const authenticateSocket = require("./middleware/authenticateSocket");
 
 /**
  * Initializes Socket.IO on top of an existing HTTP server.
@@ -18,6 +19,8 @@ function initSocket(server) {
       origin: config.CLIENT_URL,
     },
   });
+
+  io.use(authenticateSocket);
 
   io.on(EVENTS.CONNECTION, (socket) => {
     registerConnectionHandlers(socket, io);

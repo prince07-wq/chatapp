@@ -34,7 +34,8 @@ function registerMessageHandlers(socket, io) {
       const messageData = {
         room,
         message,
-        senderId: socket.id, // placeholder — replace with socket.data.user.id after auth
+        senderId: socket.data.user.id,
+        senderUsername: socket.data.user.username,
         sentAt: new Date().toISOString(),
       };
 

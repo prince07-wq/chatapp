@@ -12,7 +12,8 @@ const app = express();
 app.use(cors({ origin: config.CLIENT_URL }));
 app.use(express.json());
 
-// Versioned API routes mount here as they're built, e.g.:
-// app.use("/api/v1", require("./routes/v1"));
+app.use("/api/v1/auth", require("./routes/v1/authRoutes"));
+
+app.use(require("./middleware/errorHandler"));
 
 module.exports = app;
