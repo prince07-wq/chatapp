@@ -2,6 +2,7 @@ const EVENTS = require("../../constants/events");
 const { isValidRoomPayload } = require("../../utils/socketValidators");
 const emitError = require("../../utils/emitError");
 const presenceService = require("../../services/presenceService");
+const messageService = require("../../services/messageService");
 
 /**
  * Handles room join/leave for a single socket.
@@ -30,6 +31,18 @@ function registerRoomHandlers(socket, io) {
 
       socket.emit(EVENTS.ROOM_JOINED, { room, count });
       socket.to(room).emit(EVENTS.USER_JOINED, { room, socketId: socket.id, count });
+
+      const deliveredIds = await messageService.markRoomMessagesDelivered(
+        room,
+        socket.data.user.id
+      );
+      if (deliveredIds.length > 0) {
+        io.to(room).emit(EVENTS.MESSAGE_STATUS_UPDATE, {
+          room,
+          messageIds: deliveredIds,
+          status: "delivered",
+        });
+      }
     } catch (err) {
       console.error("[roomHandler] join_room error:", err.message);
       emitError(socket, "Failed to join room.");

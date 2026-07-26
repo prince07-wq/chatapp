@@ -6,6 +6,7 @@ const registerRoomHandlers = require("./handlers/roomHandler");
 const registerMessageHandlers = require("./handlers/messageHandler");
 const registerPresenceHandlers = require("./handlers/presenceHandler");
 const registerTypingHandlers = require("./handlers/typingHandler");
+const registerReadReceiptHandlers = require("./handlers/readReceiptHandler");
 const authenticateSocket = require("./middleware/authenticateSocket");
 
 /**
@@ -28,6 +29,7 @@ function initSocket(server) {
     registerMessageHandlers(socket, io);
     registerPresenceHandlers(socket, io);
     registerTypingHandlers(socket, io);
+    registerReadReceiptHandlers(socket, io);
   });
 
   return io;

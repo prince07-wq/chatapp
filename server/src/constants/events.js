@@ -14,6 +14,7 @@ module.exports = {
   REQUEST_MEMBERS: "request_members",
   TYPING_START: "typing_start",
   TYPING_STOP: "typing_stop",
+  MARK_SEEN: "mark_seen",
 
   // Server → Client
   ROOM_JOINED: "room_joined",
@@ -22,5 +23,6 @@ module.exports = {
   USER_JOINED: "user_joined",
   USER_LEFT: "user_left",
   ROOM_MEMBERS: "room_members",
+  MESSAGE_STATUS_UPDATE: "message_status_update",
   ERROR: "error",
 };

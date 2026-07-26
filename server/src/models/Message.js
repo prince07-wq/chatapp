@@ -6,6 +6,7 @@ const messageSchema = new mongoose.Schema(
     senderId: { type: String, required: true },
     senderUsername: { type: String, required: true },
     message: { type: String, required: true, trim: true },
+    status: { type: String, enum: ["sent", "delivered", "seen"], default: "sent" },
   },
   { timestamps: true }
 );
