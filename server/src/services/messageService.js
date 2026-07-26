@@ -1,8 +1,8 @@
 const Message = require("../models/Message");
 const AppError = require("../utils/AppError");
 
-async function createMessage({ room, senderId, senderUsername, message, isPrivate = false }) {
-  const saved = await Message.create({ room, senderId, senderUsername, message, isPrivate });
+async function createMessage({ room, senderId, senderUsername, message, isPrivate = false, attachment = null }) {
+  const saved = await Message.create({ room, senderId, senderUsername, message, isPrivate, attachment });
   return saved;
 }
 

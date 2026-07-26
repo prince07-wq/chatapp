@@ -25,11 +25,16 @@ function isValidEditPayload(body) {
   return body && isNonEmptyString(body.message);
 }
 
+function isValidRefreshPayload(body) {
+  return body && isNonEmptyString(body.refreshToken);
+}
+
 module.exports = {
   isValidEmail,
   isValidRegisterPayload,
   isValidLoginPayload,
   isValidEditPayload,
+  isValidRefreshPayload,
   parsePagination,
 };
 

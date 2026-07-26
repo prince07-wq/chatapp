@@ -19,11 +19,11 @@ function registerMessageHandlers(socket, io) {
       if (!isValidMessagePayload(payload)) {
         return emitError(
           socket,
-          "Invalid message payload. 'room' and 'message' are required."
+          "Invalid message payload. 'room' and either 'message' or 'attachment' are required."
         );
       }
 
-      const { room, message } = payload;
+      const { room, message, attachment } = payload;
 
       if (!socket.rooms.has(room)) {
         return emitError(socket, `You are not a member of room "${room}".`);
@@ -34,6 +34,7 @@ function registerMessageHandlers(socket, io) {
         senderId: socket.data.user.id,
         senderUsername: socket.data.user.username,
         message,
+        attachment,
       });
 
       const members = await presenceService.getMembers(room);
@@ -48,6 +49,7 @@ function registerMessageHandlers(socket, io) {
         id: finalMessage._id,
         room: finalMessage.room,
         message: finalMessage.message,
+        attachment: finalMessage.attachment,
         senderId: finalMessage.senderId,
         senderUsername: finalMessage.senderUsername,
         status: finalMessage.status,
@@ -64,11 +66,11 @@ function registerMessageHandlers(socket, io) {
       if (!isValidPrivateMessagePayload(payload)) {
         return emitError(
           socket,
-          "Invalid payload. 'recipientId' and 'message' are required."
+          "Invalid payload. 'recipientId' and either 'message' or 'attachment' are required."
         );
       }
 
-      const { recipientId, message } = payload;
+      const { recipientId, message, attachment } = payload;
       const senderId = socket.data.user.id;
       const room = getPrivateRoomId(senderId, recipientId);
 
@@ -79,6 +81,7 @@ function registerMessageHandlers(socket, io) {
         senderId,
         senderUsername: socket.data.user.username,
         message,
+        attachment,
         isPrivate: true,
       });
 
@@ -94,6 +97,7 @@ function registerMessageHandlers(socket, io) {
         id: finalMessage._id,
         room: finalMessage.room,
         message: finalMessage.message,
+        attachment: finalMessage.attachment,
         senderId: finalMessage.senderId,
         senderUsername: finalMessage.senderUsername,
         status: finalMessage.status,

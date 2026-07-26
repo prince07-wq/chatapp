@@ -17,21 +17,23 @@ function isValidRoomPayload(payload) {
 }
 
 function isValidMessagePayload(payload) {
-  return (
-    payload !== null &&
-    typeof payload === "object" &&
-    isNonEmptyString(payload.room) &&
-    isNonEmptyString(payload.message)
-  );
+  if (payload === null || typeof payload !== "object") return false;
+  if (!isNonEmptyString(payload.room)) return false;
+
+  const hasText = isNonEmptyString(payload.message);
+  const hasAttachment = payload.attachment && isNonEmptyString(payload.attachment.fileUrl);
+
+  return hasText || hasAttachment;
 }
 
 function isValidPrivateMessagePayload(payload) {
-  return (
-    payload !== null &&
-    typeof payload === "object" &&
-    isNonEmptyString(payload.recipientId) &&
-    isNonEmptyString(payload.message)
-  );
+  if (payload === null || typeof payload !== "object") return false;
+  if (!isNonEmptyString(payload.recipientId)) return false;
+
+  const hasText = isNonEmptyString(payload.message);
+  const hasAttachment = payload.attachment && isNonEmptyString(payload.attachment.fileUrl);
+
+  return hasText || hasAttachment;
 }
 
 module.exports = {

@@ -3,6 +3,7 @@ const AppError = require("../utils/AppError");
 const {
   isValidRegisterPayload,
   isValidLoginPayload,
+  isValidRefreshPayload,
 } = require("../utils/httpValidators");
 
 async function register(req, res, next) {
@@ -34,4 +35,30 @@ async function login(req, res, next) {
   }
 }
 
-module.exports = { register, login };
+async function refresh(req, res, next) {
+  try {
+    if (!isValidRefreshPayload(req.body)) {
+      throw new AppError("refreshToken is required.", 400);
+    }
+
+    const result = await authService.refreshAccessToken(req.body.refreshToken);
+    res.status(200).json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function logout(req, res, next) {
+  try {
+    if (!isValidRefreshPayload(req.body)) {
+      throw new AppError("refreshToken is required.", 400);
+    }
+
+    await authService.logoutUser(req.body.refreshToken);
+    res.status(200).json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { register, login, refresh, logout };
