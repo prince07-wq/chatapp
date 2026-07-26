@@ -1,22 +1,15 @@
 const EVENTS = require("../../constants/events");
 const { isValidMessagePayload } = require("../../utils/socketValidators");
 const emitError = require("../../utils/emitError");
+const messageService = require("../../services/messageService");
 
 /**
  * Handles sending a message to a room.
- * Only broadcasts to clients currently joined to that room
- * (io.to(room)), never globally.
- *
- * senderId currently falls back to the raw socket.id.
- * Once JWT auth is added, this will read from the authenticated
- * user attached to socket.data (e.g. socket.data.user.id) instead —
- * the broadcast logic itself will not need to change.
- *
- * Persisting messageData to MongoDB later is a single insertion
- * point right before the io.to(room).emit call below.
+ * Validates, persists via messageService, then broadcasts only to
+ * clients currently joined to that room (io.to(room)).
  */
 function registerMessageHandlers(socket, io) {
-  socket.on(EVENTS.SEND_MESSAGE, (payload) => {
+  socket.on(EVENTS.SEND_MESSAGE, async (payload) => {
     try {
       if (!isValidMessagePayload(payload)) {
         return emitError(
@@ -31,17 +24,20 @@ function registerMessageHandlers(socket, io) {
         return emitError(socket, `You are not a member of room "${room}".`);
       }
 
-      const messageData = {
+      const saved = await messageService.createMessage({
         room,
-        message,
         senderId: socket.data.user.id,
         senderUsername: socket.data.user.username,
-        sentAt: new Date().toISOString(),
-      };
+        message,
+      });
 
-      // Future: await Message.create(messageData) goes here, before broadcasting.
-
-      io.to(room).emit(EVENTS.NEW_MESSAGE, messageData);
+      io.to(room).emit(EVENTS.NEW_MESSAGE, {
+        room: saved.room,
+        message: saved.message,
+        senderId: saved.senderId,
+        senderUsername: saved.senderUsername,
+        sentAt: saved.createdAt,
+      });
     } catch (err) {
       console.error("[messageHandler] send_message error:", err.message);
       emitError(socket, "Failed to send message.");
