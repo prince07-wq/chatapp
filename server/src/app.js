@@ -14,6 +14,7 @@ app.use(express.json());
 
 app.use("/api/v1/auth", require("./routes/v1/authRoutes"));
 app.use("/api/v1/messages", require("./routes/v1/messageRoutes"));
+app.use("/api/v1/users", require("./routes/v1/userRoutes"));
 
 app.use(require("./middleware/errorHandler"));
 

@@ -1,8 +1,9 @@
 const EVENTS = require("../../constants/events");
-const { isValidMessagePayload } = require("../../utils/socketValidators");
+const { isValidMessagePayload, isValidPrivateMessagePayload } = require("../../utils/socketValidators");
 const emitError = require("../../utils/emitError");
 const messageService = require("../../services/messageService");
 const presenceService = require("../../services/presenceService");
+const { getPrivateRoomId } = require("../../utils/roomUtils");
 
 /**
  * Handles sending a message to a room.
@@ -55,6 +56,53 @@ function registerMessageHandlers(socket, io) {
     } catch (err) {
       console.error("[messageHandler] send_message error:", err.message);
       emitError(socket, "Failed to send message.");
+    }
+  });
+
+  socket.on(EVENTS.SEND_PRIVATE_MESSAGE, async (payload) => {
+    try {
+      if (!isValidPrivateMessagePayload(payload)) {
+        return emitError(
+          socket,
+          "Invalid payload. 'recipientId' and 'message' are required."
+        );
+      }
+
+      const { recipientId, message } = payload;
+      const senderId = socket.data.user.id;
+      const room = getPrivateRoomId(senderId, recipientId);
+
+      socket.join(room);
+
+      const saved = await messageService.createMessage({
+        room,
+        senderId,
+        senderUsername: socket.data.user.username,
+        message,
+        isPrivate: true,
+      });
+
+      const members = await presenceService.getMembers(room);
+      const hasOtherOnlineMember = members.some((m) => m.socketId !== socket.id);
+
+      let finalMessage = saved;
+      if (hasOtherOnlineMember) {
+        finalMessage = (await messageService.markDelivered(saved._id)) || saved;
+      }
+
+      io.to(room).emit(EVENTS.NEW_MESSAGE, {
+        id: finalMessage._id,
+        room: finalMessage.room,
+        message: finalMessage.message,
+        senderId: finalMessage.senderId,
+        senderUsername: finalMessage.senderUsername,
+        status: finalMessage.status,
+        isPrivate: true,
+        sentAt: finalMessage.createdAt,
+      });
+    } catch (err) {
+      console.error("[messageHandler] send_private_message error:", err.message);
+      emitError(socket, "Failed to send private message.");
     }
   });
 }

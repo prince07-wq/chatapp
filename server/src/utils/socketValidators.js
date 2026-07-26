@@ -25,8 +25,18 @@ function isValidMessagePayload(payload) {
   );
 }
 
+function isValidPrivateMessagePayload(payload) {
+  return (
+    payload !== null &&
+    typeof payload === "object" &&
+    isNonEmptyString(payload.recipientId) &&
+    isNonEmptyString(payload.message)
+  );
+}
+
 module.exports = {
   isNonEmptyString,
   isValidRoomPayload,
   isValidMessagePayload,
+  isValidPrivateMessagePayload,
 };

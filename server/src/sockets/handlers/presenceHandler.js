@@ -9,6 +9,29 @@ const presenceService = require("../../services/presenceService");
  * only validates input and wires events to that service.
  */
 function registerPresenceHandlers(socket, io) {
+  // Global online tracking — runs once per new socket connection.
+  // Only broadcasts USER_ONLINE if this is the user's first active
+  // connection, so multiple tabs from the same user don't duplicate
+  // the online list or spam broadcasts.
+  (async () => {
+    try {
+      const isNewlyOnline = await presenceService.addUserConnection(
+        socket.data.user.id,
+        socket.data.user.username,
+        socket.id
+      );
+
+      if (isNewlyOnline) {
+        io.emit(EVENTS.USER_ONLINE, {
+          userId: socket.data.user.id,
+          username: socket.data.user.username,
+        });
+      }
+    } catch (err) {
+      console.error("[presenceHandler] online registration error:", err.message);
+    }
+  })();
+
   socket.on(EVENTS.REQUEST_MEMBERS, async (payload) => {
     try {
       if (!isValidRoomPayload(payload)) {
@@ -39,6 +62,18 @@ function registerPresenceHandlers(socket, io) {
       for (const room of affectedRooms) {
         const count = await presenceService.getMemberCount(room);
         socket.to(room).emit(EVENTS.USER_LEFT, { room, socketId: socket.id, count });
+      }
+
+      const isNowOffline = await presenceService.removeUserConnection(
+        socket.data.user.id,
+        socket.id
+      );
+
+      if (isNowOffline) {
+        io.emit(EVENTS.USER_OFFLINE, {
+          userId: socket.data.user.id,
+          username: socket.data.user.username,
+        });
       }
     } catch (err) {
       console.error("[presenceHandler] disconnecting cleanup error:", err.message);

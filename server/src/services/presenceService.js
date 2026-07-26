@@ -15,6 +15,55 @@
 // room -> Map<socketId, { socketId, joinedAt }>
 const rooms = new Map();
 
+// userId -> { userId, username, socketIds: Set<socketId> }
+// Tracks global online status, independent of rooms — supports
+// multiple tabs/sockets per user without duplicating entries.
+const onlineUsers = new Map();
+
+/**
+ * Registers a socket connection for a user.
+ * Returns true only if this is the user's FIRST active connection
+ * (i.e. they just came online) — caller uses this to decide
+ * whether to broadcast a "user online" event.
+ */
+async function addUserConnection(userId, username, socketId) {
+  const isNewlyOnline = !onlineUsers.has(userId);
+
+  if (isNewlyOnline) {
+    onlineUsers.set(userId, { userId, username, socketIds: new Set() });
+  }
+
+  onlineUsers.get(userId).socketIds.add(socketId);
+  return isNewlyOnline;
+}
+
+/**
+ * Removes a socket connection for a user.
+ * Returns true only if the user has NO remaining active connections
+ * (i.e. they just went fully offline) — caller uses this to decide
+ * whether to broadcast a "user offline" event.
+ */
+async function removeUserConnection(userId, socketId) {
+  const entry = onlineUsers.get(userId);
+  if (!entry) return false;
+
+  entry.socketIds.delete(socketId);
+
+  if (entry.socketIds.size === 0) {
+    onlineUsers.delete(userId);
+    return true;
+  }
+
+  return false;
+}
+
+async function getOnlineUsers() {
+  return Array.from(onlineUsers.values()).map(({ userId, username }) => ({
+    userId,
+    username,
+  }));
+}
+
 async function addMember(room, socketId) {
   if (!rooms.has(room)) {
     rooms.set(room, new Map());
@@ -72,4 +121,7 @@ module.exports = {
   removeMemberFromAllRooms,
   getMembers,
   getMemberCount,
+  addUserConnection,
+  removeUserConnection,
+  getOnlineUsers,
 };

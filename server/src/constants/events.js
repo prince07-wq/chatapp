@@ -11,6 +11,7 @@ module.exports = {
   JOIN_ROOM: "join_room",
   LEAVE_ROOM: "leave_room",
   SEND_MESSAGE: "send_message",
+  SEND_PRIVATE_MESSAGE: "send_private_message",
   REQUEST_MEMBERS: "request_members",
   TYPING_START: "typing_start",
   TYPING_STOP: "typing_stop",
@@ -24,5 +25,7 @@ module.exports = {
   USER_LEFT: "user_left",
   ROOM_MEMBERS: "room_members",
   MESSAGE_STATUS_UPDATE: "message_status_update",
+  USER_ONLINE: "user_online",
+  USER_OFFLINE: "user_offline",
   ERROR: "error",
 };
