@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  @apply m-0 bg-paper font-sans text-ink antialiased;
+  @apply transition-colors duration-300;
+  @apply dark:bg-ink dark:text-paper;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(52, 120, 246, 0.22);
+}
+
+.apple-spinner-bar {
+  position: absolute;
+  left: calc(50% - 1px);
+  top: 1px;
+  width: 2px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  transform-origin: 1px 13px;
+  animation: apple-spinner-fade 1s linear infinite;
+}
+
+@keyframes apple-spinner-fade {
+  0% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0.15;
+  }
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: currentColor;
+  transition: background-color 9999s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
