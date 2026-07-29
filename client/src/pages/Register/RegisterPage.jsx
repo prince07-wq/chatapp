@@ -3,8 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import AuthLayout from "../../components/Layout/AuthLayout";
 import FloatingInput from "../../components/UI/FloatingInput";
 import PrimaryButton from "../../components/UI/PrimaryButton";
-import { registerRequest } from "../../api/authApi";
-import { saveTokens } from "../../utils/tokenStorage";
+import { useAuth } from "../../context/AuthContext.jsx";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -17,6 +16,7 @@ function getApiError(error) {
 }
 
 export default function RegisterPage() {
+  const { register: registerUser } = useAuth();
   const navigate = useNavigate();
 
   const [form, setForm] = useState({
@@ -77,15 +77,10 @@ export default function RegisterPage() {
     try {
       setLoading(true);
 
-      const response = await registerRequest({
+      await registerUser({
         username: form.username.trim(),
         email: form.email.trim().toLowerCase(),
         password: form.password,
-      });
-
-      saveTokens({
-        accessToken: response.accessToken || response.token,
-        refreshToken: response.refreshToken,
       });
 
       navigate("/chat", { replace: true });

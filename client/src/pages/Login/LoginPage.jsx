@@ -4,8 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import AuthLayout from "../../components/Layout/AuthLayout";
 import AppleSpinner from "../../components/UI/AppleSpinner";
 import FloatingInput from "../../components/UI/FloatingInput";
-import { loginRequest } from "../../api/authApi";
-import { saveTokens } from "../../utils/tokenStorage";
+import { useAuth } from "../../context/AuthContext.jsx";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -18,6 +17,7 @@ function getApiError(error) {
 }
 
 export default function LoginPage() {
+  const { login } = useAuth();
   const navigate = useNavigate();
   const passwordRef = useRef(null);
 
@@ -77,14 +77,9 @@ export default function LoginPage() {
     try {
       setLoading(true);
 
-      const response = await loginRequest({
+      await login({
         email: normalizedEmail,
         password,
-      });
-
-      saveTokens({
-        accessToken: response.accessToken || response.token,
-        refreshToken: response.refreshToken,
       });
 
       navigate("/chat", { replace: true });
@@ -165,6 +160,10 @@ export default function LoginPage() {
       )}
     </AnimatePresence>
   </div>
+
+  <button type="submit" disabled={loading} className="sr-only">
+    {step === "email" ? "Continue" : "Sign in"}
+  </button>
 
   <div className="mt-4 min-h-7 text-center">
     {loading ? (
