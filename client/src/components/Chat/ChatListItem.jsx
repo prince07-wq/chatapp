@@ -13,6 +13,11 @@ function ChatListItem({
   read = false,
   onClick,
 }) {
+  const normalizedUnreadCount = Number.isFinite(Number(unreadCount))
+    ? Math.max(0, Math.floor(Number(unreadCount)))
+    : 0;
+  const hasUnread = normalizedUnreadCount > 0;
+
   return (
     <button
       type="button"
@@ -35,7 +40,7 @@ function ChatListItem({
           <span
             className={[
               "shrink-0 text-[11px]",
-              unreadCount
+              hasUnread
                 ? "font-medium text-[#6F747C] dark:text-[#A7ACB5]"
                 : "text-[#92969D]",
             ].join(" ")}
@@ -58,9 +63,9 @@ function ChatListItem({
             </span>
           </span>
 
-          {unreadCount && (
+          {hasUnread && (
             <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-[#3B82F6] px-1.5 text-[10px] font-semibold text-white">
-              {unreadCount}
+              {normalizedUnreadCount}
             </span>
           )}
         </span>
