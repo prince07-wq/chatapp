@@ -8,6 +8,7 @@ const EVENTS = require("../../constants/events");
  */
 function registerConnectionHandlers(socket, io) {
   console.log(`[socket] connected: ${socket.id}`);
+  socket.join(`user:${socket.data.user.id}`);
 
   socket.on(EVENTS.DISCONNECT, () => {
     console.log(`[socket] disconnected: ${socket.id}`);

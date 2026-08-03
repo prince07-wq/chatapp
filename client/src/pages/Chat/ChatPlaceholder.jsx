@@ -27,6 +27,7 @@ import MessageComposer from "../../components/Chat/MessageComposer.jsx";
 import NavigationItem from "../../components/Chat/NavigationItem.jsx";
 import UserListItem from "../../components/Chat/UserListItem.jsx";
 import FriendsPage from "../Friends/FriendsPage.jsx";
+import NotificationsPage from "../Notifications/NotificationsPage.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import {
   getLatestPrivateMessagePage,
@@ -34,7 +35,7 @@ import {
   getPrivateMessagePage,
   getRoomMessagePage,
 } from "../../api/messageApi.js";
-import { getOnlineUsers } from "../../api/userApi.js";
+import { getFriends, getOnlineUsers } from "../../api/userApi.js";
 import { getAccessToken } from "../../utils/tokenStorage.js";
 import {
   resolveUploadedFileUrl,
@@ -94,7 +95,7 @@ const navigationItems = [
   { label: "DMs", icon: MessageCircle, section: "dms" },
   { label: "Friends", icon: UserPlus, section: "friends" },
   { label: "Calls", icon: Phone },
-  { label: "Notifications", icon: Bell, badge: 3 },
+  { label: "Notifications", icon: Bell, section: "notifications" },
   { label: "Profile", icon: User },
   { label: "Settings", icon: Settings },
 ];
@@ -413,6 +414,7 @@ function IconButton({ label, children, className = "", ...props }) {
 function NavigationRail({
   activeSection,
   incomingFriendCount,
+  unreadNotificationCount,
   profileInitials,
   loggingOut,
   onSectionChange,
@@ -439,6 +441,8 @@ function NavigationRail({
             badge={
               item.section === "friends"
                 ? incomingFriendCount || undefined
+                : item.section === "notifications"
+                  ? unreadNotificationCount || undefined
                 : item.badge
             }
             onClick={
@@ -486,6 +490,49 @@ function ChatList({
   onOpenProfile,
   onMessageUser,
 }) {
+  const [activeFilter, setActiveFilter] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+
+  function getChatSummary(chat) {
+    return roomSummaries?.[chat.room] ?? {
+      unreadCount: Math.max(0, chat.unread ?? 0),
+      latestMessage: null,
+    };
+  }
+
+  const unreadConversationCount = chatItems.filter(
+    (chat) => Number(getChatSummary(chat).unreadCount) > 0,
+  ).length;
+  const groupConversationCount = chatItems.filter((chat) => chat.group).length;
+  const filteredChatItems = chatItems.filter((chat) => {
+    const roomSummary = getChatSummary(chat);
+    const matchesFilter =
+      activeFilter === "all" ||
+      (activeFilter === "unread" && Number(roomSummary.unreadCount) > 0) ||
+      (activeFilter === "groups" && chat.group);
+
+    if (!matchesFilter) return false;
+    if (!normalizedSearchQuery) return true;
+
+    const { preview } = getRoomPreview(chat, roomSummary, relativeTimeNow);
+    return `${chat.name} ${preview}`
+      .toLowerCase()
+      .includes(normalizedSearchQuery);
+  });
+  const filteredEmptyMessage =
+    activeFilter === "unread"
+      ? "You're all caught up."
+      : activeFilter === "groups"
+        ? "No groups found."
+        : normalizedSearchQuery
+          ? "No conversations found."
+          : emptyMessage;
+  const activeChipColors =
+    "bg-[#3B82F6] text-white hover:bg-[#3478E5] focus-visible:ring-[#3B82F6]/35";
+  const inactiveChipColors =
+    "border border-[#E5E6E3] text-[#646970] hover:border-[#D8DAD6] hover:bg-[#F7F7F5] focus-visible:ring-[#3B82F6]/30 dark:border-white/[0.08] dark:text-[#AEB3BB] dark:hover:bg-[#20242B]";
+
   return (
     <section className="hidden min-h-0 min-w-0 flex-col border-r border-[#ECEDEA] bg-white dark:border-white/[0.06] dark:bg-[#181A1F] md:flex">
       <header className="shrink-0 px-5 pb-4 pt-5 xl:px-6">
@@ -518,6 +565,8 @@ function ChatList({
           />
           <input
             type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
             aria-label="Search chats"
             placeholder="Search conversations"
             className="h-11 w-full rounded-[14px] border border-transparent bg-[#F4F4F2] pl-10 pr-11 text-[14px] text-[#25272B] outline-none transition-colors duration-200 placeholder:text-[#9A9EA5] focus:border-[#3B82F6]/35 focus:bg-white focus:ring-2 focus:ring-[#3B82F6]/10 dark:bg-[#20242B] dark:text-[#F2F3F5] dark:placeholder:text-[#737A85] dark:focus:bg-[#20242B]"
@@ -534,21 +583,37 @@ function ChatList({
         <div className="mt-4 flex items-center gap-2">
           <button
             type="button"
-            className="h-9 rounded-xl bg-[#3B82F6] px-4 text-[13px] font-medium text-white transition-colors duration-200 hover:bg-[#3478E5] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/35"
+            aria-pressed={activeFilter === "all"}
+            onClick={() => setActiveFilter("all")}
+            className={`h-9 rounded-xl px-4 text-[13px] font-medium transition-colors duration-200 focus:outline-none focus-visible:ring-2 ${activeFilter === "all" ? activeChipColors : inactiveChipColors}`}
           >
             All
           </button>
           <button
             type="button"
-            className="h-9 rounded-xl border border-[#E5E6E3] px-3.5 text-[13px] font-medium text-[#646970] transition-colors duration-200 hover:border-[#D8DAD6] hover:bg-[#F7F7F5] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/30 dark:border-white/[0.08] dark:text-[#AEB3BB] dark:hover:bg-[#20242B]"
+            aria-pressed={activeFilter === "unread"}
+            onClick={() => setActiveFilter("unread")}
+            className={`h-9 rounded-xl px-3.5 text-[13px] font-medium transition-colors duration-200 focus:outline-none focus-visible:ring-2 ${activeFilter === "unread" ? activeChipColors : inactiveChipColors}`}
           >
-            Unread <span className="ml-1 text-[#3B82F6]">5</span>
+            Unread{" "}
+            <span
+              className={`ml-1 ${activeFilter === "unread" ? "text-white/75" : "text-[#3B82F6]"}`}
+            >
+              {unreadConversationCount}
+            </span>
           </button>
           <button
             type="button"
-            className="hidden h-9 rounded-xl border border-[#E5E6E3] px-3.5 text-[13px] font-medium text-[#646970] transition-colors duration-200 hover:border-[#D8DAD6] hover:bg-[#F7F7F5] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/30 dark:border-white/[0.08] dark:text-[#AEB3BB] dark:hover:bg-[#20242B] xl:block"
+            aria-pressed={activeFilter === "groups"}
+            onClick={() => setActiveFilter("groups")}
+            className={`hidden h-9 rounded-xl px-3.5 text-[13px] font-medium transition-colors duration-200 focus:outline-none focus-visible:ring-2 xl:block ${activeFilter === "groups" ? activeChipColors : inactiveChipColors}`}
           >
-            Groups <span className="ml-1 text-[#8C9198]">3</span>
+            Groups{" "}
+            <span
+              className={`ml-1 ${activeFilter === "groups" ? "text-white/75" : "text-[#8C9198]"}`}
+            >
+              {groupConversationCount}
+            </span>
           </button>
           <IconButton
             label="Add filter"
@@ -560,7 +625,7 @@ function ChatList({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5 xl:px-4">
-        {chatItems.map((chat) => {
+        {filteredChatItems.map((chat) => {
           if (peopleMode) {
             const online = onlineUserKeys.has(`id:${chat.recipientId}`);
 
@@ -576,10 +641,7 @@ function ChatList({
             );
           }
 
-          const roomSummary = roomSummaries?.[chat.room] ?? {
-            unreadCount: Math.max(0, chat.unread ?? 0),
-            latestMessage: null,
-          };
+          const roomSummary = getChatSummary(chat);
           const { preview, time } = getRoomPreview(
             chat,
             roomSummary,
@@ -611,9 +673,9 @@ function ChatList({
             />
           );
         })}
-        {chatItems.length === 0 && emptyMessage && (
+        {filteredChatItems.length === 0 && filteredEmptyMessage && (
           <p className="px-3 py-8 text-center text-[13px] text-[#92969D] dark:text-[#777E88]">
-            {emptyMessage}
+            {filteredEmptyMessage}
           </p>
         )}
       </div>
@@ -794,7 +856,14 @@ export default function ChatPlaceholder() {
   const [loadingDmUsers, setLoadingDmUsers] = useState(true);
   const [dmUsersError, setDmUsersError] = useState("");
   const [incomingFriendCount, setIncomingFriendCount] = useState(0);
+  const [incomingFriendRequests, setIncomingFriendRequests] = useState([]);
   const [friendsRefreshVersion, setFriendsRefreshVersion] = useState(0);
+  const [friendsInitialTab, setFriendsInitialTab] = useState("friends");
+  const [friendActivityNotifications, setFriendActivityNotifications] =
+    useState([]);
+  const [readNotificationIds, setReadNotificationIds] = useState(
+    () => new Set(),
+  );
   const [chatMessages, setChatMessages] = useState(messages);
   const [roomSummaries, setRoomSummaries] = useState(() =>
     Object.fromEntries(
@@ -901,6 +970,71 @@ export default function ChatPlaceholder() {
     }))
     .filter((chat) => chat.room);
   const allChats = [...chats, ...dmChats];
+  const friendRequestNotifications = incomingFriendRequests.map((request) => ({
+    id: `friend-request:${request.requestId}`,
+    type: "friend_request",
+    name: request.username || "User",
+    title: `${request.username || "Someone"} sent you a friend request`,
+    subtitle: "Friend request",
+    createdAt: request.createdAt,
+    requestId: request.requestId,
+  }));
+  const acceptedFriendNotifications = friendActivityNotifications.map(
+    (notification) => ({
+      ...notification,
+      name: notification.username,
+      title: `${notification.username} accepted your friend request`,
+      subtitle: "You're now friends",
+    }),
+  );
+  const conversationNotifications = Object.entries(roomSummaries)
+    .filter(([, summary]) => Number(summary?.unreadCount) > 0)
+    .map(([room, summary]) => {
+      const latestMessage = summary.latestMessage;
+      const chat = allChats.find((candidate) => candidate.room === room);
+      if (!chat) return null;
+
+      const unreadCount = Math.max(1, Number(summary.unreadCount) || 0);
+      const isPrivate = Boolean(chat.recipientId || latestMessage?.isPrivate);
+      const attachmentLabel = latestMessage?.attachment
+        ? latestMessage.attachment.mimeType?.startsWith("audio/")
+          ? "Voice message"
+          : latestMessage.attachment.fileName || "Attachment"
+        : "";
+
+      return {
+        id: `conversation:${room}`,
+        type: isPrivate ? "dm_message" : "room_message",
+        name: chat.name,
+        title: `${unreadCount} unread ${unreadCount === 1 ? "message" : "messages"} in ${chat.name}`,
+        subtitle: latestMessage?.text || attachmentLabel || chat.preview,
+        createdAt: latestMessage?.createdAt,
+        room,
+        chat,
+      };
+    })
+    .filter(Boolean);
+  const notifications = Array.from(
+    new Map(
+      [
+        ...friendRequestNotifications,
+        ...acceptedFriendNotifications,
+        ...conversationNotifications,
+      ].map((notification) => [notification.id, notification]),
+    ).values(),
+  )
+    .map((notification) => ({
+      ...notification,
+      read: readNotificationIds.has(notification.id),
+    }))
+    .sort((first, second) => {
+      const firstTime = new Date(first.createdAt || 0).getTime() || 0;
+      const secondTime = new Date(second.createdAt || 0).getTime() || 0;
+      return secondTime - firstTime;
+    });
+  const unreadNotificationCount = notifications.filter(
+    (notification) => !notification.read,
+  ).length;
   const visibleChats =
     activeSection === "dms"
       ? dmChats
@@ -994,6 +1128,27 @@ export default function ChatPlaceholder() {
 
     return () => controller.abort();
   }, [currentUserId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    getFriends({ signal: controller.signal })
+      .then((friendLists) => {
+        if (controller.signal.aborted) return;
+        setIncomingFriendRequests(friendLists.incoming);
+        setIncomingFriendCount(friendLists.incoming.length);
+      })
+      .catch((error) => {
+        if (error.code !== "ERR_CANCELED") {
+          console.error(
+            "[friends] notification_error",
+            error.response?.data?.error ?? error.message,
+          );
+        }
+      });
+
+    return () => controller.abort();
+  }, [currentUserId, friendsRefreshVersion]);
 
   useEffect(() => {
     if (availableDmUsers.length === 0) return undefined;
@@ -1386,8 +1541,34 @@ export default function ChatPlaceholder() {
       });
     }
 
-    function handleFriendsUpdated() {
+    function handleFriendsUpdated(notification) {
       setFriendsRefreshVersion((version) => version + 1);
+
+      if (
+        notification?.type !== "friend_request_accepted" ||
+        !notification.requestId ||
+        !notification.user?.userId
+      ) {
+        return;
+      }
+
+      const acceptedNotification = {
+        id: `friend-accepted:${notification.requestId}`,
+        type: notification.type,
+        requestId: String(notification.requestId),
+        userId: String(notification.user.userId),
+        username: notification.user.username || "User",
+        createdAt: notification.createdAt || new Date().toISOString(),
+      };
+
+      setFriendActivityNotifications((currentNotifications) =>
+        currentNotifications.some(
+          (currentNotification) =>
+            currentNotification.id === acceptedNotification.id,
+        )
+          ? currentNotifications
+          : [acceptedNotification, ...currentNotifications],
+      );
     }
 
     socket.on("connect", handleConnect);
@@ -1396,6 +1577,7 @@ export default function ChatPlaceholder() {
     socket.on("socket_error", handleSocketError);
     socket.on("error", handleSocketError);
     socket.on("new_message", handleReceiveMessage);
+    socket.on("message_notification", handleReceiveMessage);
     socket.on("message_status_update", handleMessageStatusUpdate);
     socket.on("typing_start", handleTypingStart);
     socket.on("typing_stop", handleTypingStop);
@@ -1418,6 +1600,7 @@ export default function ChatPlaceholder() {
       socket.off("socket_error", handleSocketError);
       socket.off("error", handleSocketError);
       socket.off("new_message", handleReceiveMessage);
+      socket.off("message_notification", handleReceiveMessage);
       socket.off("message_status_update", handleMessageStatusUpdate);
       socket.off("typing_start", handleTypingStart);
       socket.off("typing_stop", handleTypingStop);
@@ -2123,7 +2306,8 @@ export default function ChatPlaceholder() {
   }
 
   function handleSectionChange(section) {
-    if (["rooms", "dms", "friends"].includes(section)) {
+    if (["rooms", "dms", "friends", "notifications"].includes(section)) {
+      if (section === "friends") setFriendsInitialTab("friends");
       setActiveSection(section);
     }
   }
@@ -2160,6 +2344,42 @@ export default function ChatPlaceholder() {
       room: chat.room ?? getDmRoomId(currentUserId, normalizedRecipientId),
       recipientId: normalizedRecipientId,
     });
+  }
+
+  function handleOpenNotification(notification) {
+    setReadNotificationIds((currentIds) => {
+      if (currentIds.has(notification.id)) return currentIds;
+      const nextIds = new Set(currentIds);
+      nextIds.add(notification.id);
+      return nextIds;
+    });
+
+    if (notification.type === "friend_request") {
+      setFriendsInitialTab("incoming");
+      setActiveSection("friends");
+      return;
+    }
+
+    if (notification.type === "friend_request_accepted") {
+      setFriendsInitialTab("friends");
+      setActiveSection("friends");
+      return;
+    }
+
+    const chat = notification.chat;
+    if (!chat?.room) return;
+
+    if (chat.room === activeRoomRef.current) {
+      socketRef.current?.emit("mark_seen", { room: chat.room });
+      clearRoomUnread(chat.room);
+    }
+
+    if (notification.type === "dm_message") {
+      handleMessageUser(chat);
+    } else {
+      setActiveSection("rooms");
+      handleChatSelect(chat);
+    }
   }
 
   function handleOpenProfile(chat) {
@@ -2290,6 +2510,7 @@ export default function ChatPlaceholder() {
         <NavigationRail
           activeSection={activeSection}
           incomingFriendCount={incomingFriendCount}
+          unreadNotificationCount={unreadNotificationCount}
           profileInitials={profileInitials}
           loggingOut={loggingOut}
           onSectionChange={handleSectionChange}
@@ -2299,8 +2520,14 @@ export default function ChatPlaceholder() {
           <FriendsPage
             onlineUserKeys={onlineUserKeys}
             refreshVersion={friendsRefreshVersion}
+            initialTab={friendsInitialTab}
             onIncomingCountChange={setIncomingFriendCount}
             onMessage={handleMessageUser}
+          />
+        ) : activeSection === "notifications" ? (
+          <NotificationsPage
+            notifications={notifications}
+            onOpen={handleOpenNotification}
           />
         ) : (
           <>

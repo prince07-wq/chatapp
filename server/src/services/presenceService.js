@@ -12,7 +12,7 @@
  * Redis (or any future store) won't have access to socket.io internals.
  */
 
-// room -> Map<socketId, { socketId, joinedAt }>
+// room -> Map<socketId, { socketId, userId, username, joinedAt }>
 const rooms = new Map();
 
 // userId -> { userId, username, socketIds: Set<socketId> }
@@ -64,12 +64,14 @@ async function getOnlineUsers() {
   }));
 }
 
-async function addMember(room, socketId) {
+async function addMember(room, socketId, userId, username) {
   if (!rooms.has(room)) {
     rooms.set(room, new Map());
   }
   rooms.get(room).set(socketId, {
     socketId,
+    userId,
+    username,
     joinedAt: new Date().toISOString(),
   });
 }

@@ -9,6 +9,7 @@ const initSocket = require("./sockets");
  * Does NOT call .listen() — that's index.js's job.
  */
 const server = http.createServer(app);
-initSocket(server);
+const io = initSocket(server);
+app.set("io", io);
 
 module.exports = server;

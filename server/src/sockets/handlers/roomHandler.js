@@ -26,11 +26,22 @@ function registerRoomHandlers(socket, io) {
       socket.join(room);
       socket.data.currentRoom = room;
 
-      await presenceService.addMember(room, socket.id);
+      await presenceService.addMember(
+        room,
+        socket.id,
+        socket.data.user.id,
+        socket.data.user.username
+      );
       const count = await presenceService.getMemberCount(room);
 
       socket.emit(EVENTS.ROOM_JOINED, { room, count });
-      socket.to(room).emit(EVENTS.USER_JOINED, { room, socketId: socket.id, count });
+      socket.to(room).emit(EVENTS.USER_JOINED, {
+        room,
+        socketId: socket.id,
+        userId: socket.data.user.id,
+        username: socket.data.user.username,
+        count,
+      });
 
       const deliveredIds = await messageService.markRoomMessagesDelivered(
         room,

@@ -21,11 +21,13 @@ module.exports = {
   ROOM_JOINED: "room_joined",
   ROOM_LEFT: "room_left",
   NEW_MESSAGE: "new_message",
+  MESSAGE_NOTIFICATION: "message_notification",
   USER_JOINED: "user_joined",
   USER_LEFT: "user_left",
   ROOM_MEMBERS: "room_members",
   MESSAGE_STATUS_UPDATE: "message_status_update",
   USER_ONLINE: "user_online",
   USER_OFFLINE: "user_offline",
+  FRIENDS_UPDATED: "friends_updated",
   ERROR: "error",
 };

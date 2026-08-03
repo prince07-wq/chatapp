@@ -45,16 +45,10 @@ function registerMessageHandlers(socket, io) {
         finalMessage = (await messageService.markDelivered(saved._id)) || saved;
       }
 
-      io.to(room).emit(EVENTS.NEW_MESSAGE, {
-        id: finalMessage._id,
-        room: finalMessage.room,
-        message: finalMessage.message,
-        attachment: finalMessage.attachment,
-        senderId: finalMessage.senderId,
-        senderUsername: finalMessage.senderUsername,
-        status: finalMessage.status,
-        sentAt: finalMessage.createdAt,
-      });
+      io.to(room).emit(EVENTS.NEW_MESSAGE, finalMessage.toObject());
+      socket.broadcast
+        .except(room)
+        .emit(EVENTS.MESSAGE_NOTIFICATION, finalMessage.toObject());
     } catch (err) {
       console.error("[messageHandler] send_message error:", err.message);
       emitError(socket, "Failed to send message.");
@@ -93,7 +87,7 @@ function registerMessageHandlers(socket, io) {
         finalMessage = (await messageService.markDelivered(saved._id)) || saved;
       }
 
-      io.to(room).emit(EVENTS.NEW_MESSAGE, {
+      io.to(room).to(`user:${recipientId}`).emit(EVENTS.NEW_MESSAGE, {
         id: finalMessage._id,
         room: finalMessage.room,
         message: finalMessage.message,

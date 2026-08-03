@@ -71,10 +71,11 @@ function SmallButton({ children, variant = "secondary", ...props }) {
 export default function FriendsPage({
   onlineUserKeys,
   refreshVersion,
+  initialTab = "friends",
   onIncomingCountChange,
   onMessage,
 }) {
-  const [activeTab, setActiveTab] = useState("friends");
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [lists, setLists] = useState(EMPTY_LISTS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
