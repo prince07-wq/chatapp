@@ -26,11 +26,16 @@ const onlineUsers = new Map();
  * (i.e. they just came online) — caller uses this to decide
  * whether to broadcast a "user online" event.
  */
-async function addUserConnection(userId, username, socketId) {
+async function addUserConnection(userId, username, socketId, profileImage = "") {
   const isNewlyOnline = !onlineUsers.has(userId);
 
   if (isNewlyOnline) {
-    onlineUsers.set(userId, { userId, username, socketIds: new Set() });
+    onlineUsers.set(userId, {
+      userId,
+      username,
+      profileImage,
+      socketIds: new Set(),
+    });
   }
 
   onlineUsers.get(userId).socketIds.add(socketId);
@@ -58,13 +63,14 @@ async function removeUserConnection(userId, socketId) {
 }
 
 async function getOnlineUsers() {
-  return Array.from(onlineUsers.values()).map(({ userId, username }) => ({
+  return Array.from(onlineUsers.values()).map(({ userId, username, profileImage }) => ({
     userId,
     username,
+    profileImage: profileImage || "",
   }));
 }
 
-async function addMember(room, socketId, userId, username) {
+async function addMember(room, socketId, userId, username, profileImage = "") {
   if (!rooms.has(room)) {
     rooms.set(room, new Map());
   }
@@ -72,6 +78,7 @@ async function addMember(room, socketId, userId, username) {
     socketId,
     userId,
     username,
+    profileImage,
     joinedAt: new Date().toISOString(),
   });
 }

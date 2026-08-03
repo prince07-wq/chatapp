@@ -1,5 +1,7 @@
 const presenceService = require("../services/presenceService");
 const friendService = require("../services/friendService");
+const userService = require("../services/userService");
+const tokenService = require("../services/tokenService");
 const EVENTS = require("../constants/events");
 
 function emitFriendUpdate(req, userId, notification) {
@@ -11,6 +13,23 @@ async function getOnlineUsers(req, res, next) {
   try {
     const users = await presenceService.getOnlineUsers();
     res.status(200).json({ users, count: users.length });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function updateProfile(req, res, next) {
+  try {
+    const user = await userService.updateProfile(req.user.id, req.body || {});
+    const accessToken = tokenService.generateAccessToken(user);
+    const publicProfile = {
+      userId: user.id,
+      username: user.username,
+      profileImage: user.profileImage,
+    };
+
+    req.app.get("io")?.emit(EVENTS.USER_PROFILE_UPDATED, publicProfile);
+    res.status(200).json({ user, accessToken });
   } catch (err) {
     next(err);
   }
@@ -116,6 +135,7 @@ async function removeFriend(req, res, next) {
 
 module.exports = {
   getOnlineUsers,
+  updateProfile,
   getFriends,
   searchUsers,
   sendFriendRequest,

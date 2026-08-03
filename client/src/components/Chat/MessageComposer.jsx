@@ -8,6 +8,7 @@ import {
   Smile,
   X,
 } from "lucide-react";
+import { getReplyPreviewText } from "../../utils/messageReply.js";
 
 function formatRecordingDuration(value) {
   const seconds = Math.max(0, Math.floor(value));
@@ -51,6 +52,10 @@ function MessageComposer({
   onStartRecording,
   onStopRecording,
   onCancelRecording,
+  editingMessage,
+  onCancelEdit,
+  replyingTo,
+  onCancelReply,
 }) {
   const inactive = disabled || loading;
   const recording = recordingState === "recording";
@@ -103,9 +108,32 @@ function MessageComposer({
 
   return (
     <footer className="shrink-0 border-t border-[#E8E9E6] bg-white px-4 py-3 dark:border-white/[0.06] dark:bg-[#181A1F] lg:px-5">
-      {(selectedFile || error) && (
+      {(editingMessage || replyingTo || selectedFile || error) && (
         <div className="mx-auto mb-2 flex max-w-[1180px] items-center">
           <div className="flex max-w-full items-center gap-2.5 rounded-[13px] border border-[#E7E8E5] bg-[#F7F7F5] p-2 pr-2.5 dark:border-white/[0.06] dark:bg-[#20242B]">
+            {editingMessage && (
+              <>
+                <span className="text-[11px] font-semibold text-[#3B82F6]">Editing message</span>
+                <button type="button" onClick={onCancelEdit} disabled={inactive} aria-label="Cancel editing" className="flex h-7 w-7 items-center justify-center rounded-lg text-[#858A92] hover:bg-black/[0.05] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/35 dark:hover:bg-white/[0.07]">
+                  <X size={15} strokeWidth={1.9} />
+                </button>
+              </>
+            )}
+            {replyingTo && (
+              <>
+                <span className="min-w-0 max-w-[280px] border-l-2 border-[#3B82F6] pl-2.5">
+                  <span className="block truncate text-[10px] font-semibold text-[#3B82F6]">
+                    Replying to {replyingTo.senderUsername || "message"}
+                  </span>
+                  <span className="block truncate text-[11px] text-[#777C84] dark:text-[#A3A8B0]">
+                    {getReplyPreviewText(replyingTo)}
+                  </span>
+                </span>
+                <button type="button" onClick={onCancelReply} disabled={inactive} aria-label="Cancel reply" className="flex h-7 w-7 items-center justify-center rounded-lg text-[#858A92] hover:bg-black/[0.05] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/35 dark:hover:bg-white/[0.07]">
+                  <X size={15} strokeWidth={1.9} />
+                </button>
+              </>
+            )}
             {selectedFile && (
               <>
                 {imagePreviewUrl ? (
@@ -195,7 +223,7 @@ function MessageComposer({
           <>
             <ComposerIconButton
               label="Attach a file"
-              disabled={inactive}
+              disabled={inactive || Boolean(editingMessage)}
               onClick={() => fileInputRef.current?.click()}
             >
               <Paperclip size={20} strokeWidth={1.8} />
@@ -203,7 +231,7 @@ function MessageComposer({
             <ComposerIconButton
               label="Choose an emoji"
               className="hidden sm:flex"
-              disabled={inactive}
+              disabled={inactive || Boolean(editingMessage)}
             >
               <Smile size={20} strokeWidth={1.8} />
             </ComposerIconButton>
@@ -214,6 +242,13 @@ function MessageComposer({
                 aria-label="Message"
                 value={value}
                 onChange={onChange}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && (editingMessage || replyingTo)) {
+                    event.preventDefault();
+                    if (editingMessage) onCancelEdit?.();
+                    else onCancelReply?.();
+                  }
+                }}
                 placeholder={placeholder}
                 disabled={inactive}
                 className="min-w-0 flex-1 bg-transparent text-[14px] text-[#292B2F] outline-none placeholder:text-[#9A9EA5] dark:text-[#F1F2F4] dark:placeholder:text-[#777E88]"
@@ -222,7 +257,7 @@ function MessageComposer({
                 type="button"
                 aria-label="Record a voice message"
                 onClick={onStartRecording}
-                disabled={inactive}
+                disabled={inactive || Boolean(editingMessage)}
                 className="ml-2 flex h-8 w-8 items-center justify-center rounded-[10px] text-[#848991] transition-colors duration-200 hover:bg-black/[0.04] hover:text-[#3B82F6] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/30 dark:hover:bg-white/[0.06]"
               >
                 <Mic size={18} strokeWidth={1.8} />
@@ -233,7 +268,7 @@ function MessageComposer({
 
         <button
           type="submit"
-          aria-label={recording ? "Send voice message" : "Send message"}
+          aria-label={editingMessage ? "Save edited message" : recording ? "Send voice message" : "Send message"}
           aria-busy={loading}
           disabled={sendDisabled}
           className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[15px] bg-[#3B82F6] text-white shadow-[0_4px_12px_rgba(59,130,246,0.16)] transition-colors duration-200 hover:bg-[#3478E5] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/40 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-[#181A1F]"

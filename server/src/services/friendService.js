@@ -18,6 +18,7 @@ function safeUser(user) {
   return {
     userId: String(user._id),
     username: user.username,
+    profileImage: user.profileImage || "",
   };
 }
 
@@ -25,8 +26,8 @@ async function getFriendLists(userId) {
   const relationships = await Friendship.find({
     $or: [{ requester: userId }, { recipient: userId }],
   })
-    .populate("requester", "username")
-    .populate("recipient", "username")
+    .populate("requester", "username profileImage")
+    .populate("recipient", "username profileImage")
     .sort({ updatedAt: -1 });
 
   const result = { friends: [], incoming: [], outgoing: [] };
@@ -59,7 +60,7 @@ async function searchUsers(userId, username) {
     _id: { $ne: userId },
     username: { $regex: escaped, $options: "i" },
   })
-    .select("username")
+    .select("username profileImage")
     .sort({ username: 1 })
     .limit(20);
 
@@ -97,7 +98,7 @@ async function sendFriendRequest(requesterId, recipientId) {
     throw new AppError("You cannot send a friend request to yourself.", 400);
   }
 
-  const recipient = await User.findById(targetId).select("username");
+  const recipient = await User.findById(targetId).select("username profileImage");
   if (!recipient) throw new AppError("User not found.", 404);
 
   const existing = await Friendship.findOne({

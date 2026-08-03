@@ -18,7 +18,29 @@ const messageSchema = new mongoose.Schema(
       fileName: { type: String },
       mimeType: { type: String },
     },
+    replyTo: {
+      messageId: { type: String },
+      senderId: { type: String },
+      senderUsername: { type: String },
+      message: { type: String },
+      attachment: {
+        fileName: { type: String },
+        mimeType: { type: String },
+      },
+    },
+    reactions: {
+      type: [
+        {
+          _id: false,
+          emoji: { type: String, required: true },
+          userIds: { type: [String], default: [] },
+        },
+      ],
+      default: [],
+    },
+    reactionsUpdatedAt: { type: Date, default: null },
     status: { type: String, enum: ["sent", "delivered", "seen"], default: "sent" },
+    editedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

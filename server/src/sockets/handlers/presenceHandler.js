@@ -18,13 +18,15 @@ function registerPresenceHandlers(socket, io) {
       const isNewlyOnline = await presenceService.addUserConnection(
         socket.data.user.id,
         socket.data.user.username,
-        socket.id
+        socket.id,
+        socket.data.user.profileImage,
       );
 
       if (isNewlyOnline) {
         io.emit(EVENTS.USER_ONLINE, {
           userId: socket.data.user.id,
           username: socket.data.user.username,
+          profileImage: socket.data.user.profileImage || "",
         });
       }
     } catch (err) {

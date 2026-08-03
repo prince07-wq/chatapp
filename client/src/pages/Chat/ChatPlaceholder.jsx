@@ -24,19 +24,28 @@ import ChatListItem from "../../components/Chat/ChatListItem.jsx";
 import ConversationHeader from "../../components/Chat/ConversationHeader.jsx";
 import MessageBubble from "../../components/Chat/MessageBubble.jsx";
 import MessageComposer from "../../components/Chat/MessageComposer.jsx";
+import ReactionDetailsModal from "../../components/Chat/ReactionDetailsModal.jsx";
 import NavigationItem from "../../components/Chat/NavigationItem.jsx";
 import UserListItem from "../../components/Chat/UserListItem.jsx";
 import FriendsPage from "../Friends/FriendsPage.jsx";
 import NotificationsPage from "../Notifications/NotificationsPage.jsx";
+import ProfilePage from "../Profile/ProfilePage.jsx";
+import SettingsPage from "../Settings/SettingsPage.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import {
   getLatestPrivateMessagePage,
   getLatestRoomMessagePage,
   getPrivateMessagePage,
   getRoomMessagePage,
+  editMessage as editMessageRequest,
+  deleteMessage as deleteMessageRequest,
 } from "../../api/messageApi.js";
 import { getFriends, getOnlineUsers } from "../../api/userApi.js";
 import { getAccessToken } from "../../utils/tokenStorage.js";
+import {
+  loadNotificationPreferences,
+  saveNotificationPreferences,
+} from "../../utils/notificationPreferences.js";
 import {
   resolveUploadedFileUrl,
   uploadFile,
@@ -59,6 +68,22 @@ const VOICE_MIME_TYPES = [
   "audio/ogg;codecs=opus",
   "audio/mp4",
 ];
+
+function loadHiddenMessageIds(userId) {
+  if (!userId) return new Set();
+  try {
+    const stored = JSON.parse(localStorage.getItem(`hiddenMessages:${userId}`));
+    return new Set(Array.isArray(stored) ? stored.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHiddenMessageIds(userId, ids) {
+  if (userId) {
+    localStorage.setItem(`hiddenMessages:${userId}`, JSON.stringify([...ids]));
+  }
+}
 
 function getVoiceMimeType() {
   return VOICE_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type));
@@ -96,8 +121,8 @@ const navigationItems = [
   { label: "Friends", icon: UserPlus, section: "friends" },
   { label: "Calls", icon: Phone },
   { label: "Notifications", icon: Bell, section: "notifications" },
-  { label: "Profile", icon: User },
-  { label: "Settings", icon: Settings },
+  { label: "Profile", icon: User, section: "profile" },
+  { label: "Settings", icon: Settings, section: "settings" },
 ];
 
 const chats = [
@@ -245,6 +270,50 @@ function formatMessageTime(value) {
     : date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+function normalizeMessageReactions(value) {
+  if (!Array.isArray(value)) return [];
+  const seenUserIds = new Set();
+
+  return value.reduce((activeReactions, reaction) => {
+    if (!reaction?.emoji || !Array.isArray(reaction.userIds)) {
+      return activeReactions;
+    }
+
+    const usersById = new Map(
+      (reaction.users || []).map((reactionUser) => [
+        String(reactionUser.userId),
+        {
+          userId: String(reactionUser.userId),
+          username: reactionUser.username || "Unknown user",
+          profileImage: resolveUploadedFileUrl(reactionUser.profileImage),
+        },
+      ]),
+    );
+    const userIds = [...new Set(reaction.userIds.map(String))].filter(
+      (userId) => {
+        if (seenUserIds.has(userId)) return false;
+        seenUserIds.add(userId);
+        return true;
+      },
+    );
+    if (userIds.length === 0) return activeReactions;
+
+    activeReactions.push({
+      emoji: reaction.emoji,
+      userIds,
+      users: userIds.map(
+        (userId) =>
+          usersById.get(userId) || {
+            userId,
+            username: "Unknown user",
+            profileImage: "",
+          },
+      ),
+    });
+    return activeReactions;
+  }, []);
+}
+
 function normalizeSocketMessage(incomingMessage, currentUserId) {
   const message =
     incomingMessage?.message && typeof incomingMessage.message === "object"
@@ -264,6 +333,23 @@ function normalizeSocketMessage(incomingMessage, currentUserId) {
         mimeType: rawAttachment.mimeType,
       }
     : null;
+  const rawReplyTo = message?.replyTo ?? incomingMessage?.replyTo;
+  const replyMessageId = rawReplyTo?.messageId;
+  const replyTo = replyMessageId
+    ? {
+        messageId: String(replyMessageId),
+        senderId:
+          rawReplyTo.senderId == null ? null : String(rawReplyTo.senderId),
+        senderUsername: rawReplyTo.senderUsername || "Unknown user",
+        message: rawReplyTo.message || "",
+        attachment: rawReplyTo.attachment || null,
+      }
+    : null;
+  const reactions = normalizeMessageReactions(
+    message?.reactions ?? incomingMessage?.reactions,
+  );
+  const reactionsUpdatedAt =
+    message?.reactionsUpdatedAt ?? incomingMessage?.reactionsUpdatedAt ?? null;
 
   if (!text && !attachment) return null;
 
@@ -297,8 +383,12 @@ function normalizeSocketMessage(incomingMessage, currentUserId) {
 
   return {
     id: `socket-${messageId}`,
+    backendId: String(messageId),
     text,
     attachment,
+    replyTo,
+    reactions,
+    reactionsUpdatedAt,
     createdAt: createdAt ?? new Date().toISOString(),
     time: message.time ?? formatMessageTime(createdAt),
     direction:
@@ -310,11 +400,47 @@ function normalizeSocketMessage(incomingMessage, currentUserId) {
       message.senderUsername ?? incomingMessage?.senderUsername ?? null,
     isPrivate: Boolean(message.isPrivate ?? incomingMessage?.isPrivate),
     status: rawStatus === "read" ? "seen" : rawStatus,
+    edited: Boolean(message.editedAt ?? incomingMessage?.editedAt),
     room: message.room ?? incomingMessage?.room,
   };
 }
 
+function getReactionRevision(message) {
+  const revision = new Date(message?.reactionsUpdatedAt || 0).getTime();
+  return Number.isNaN(revision) ? 0 : revision;
+}
+
+function getNewestReactionState(primary, candidate) {
+  const source =
+    getReactionRevision(candidate) >= getReactionRevision(primary)
+      ? candidate
+      : primary;
+
+  return {
+    reactions: source?.reactions ?? [],
+    reactionsUpdatedAt: source?.reactionsUpdatedAt ?? null,
+  };
+}
+
 const MESSAGE_STATUS_RANK = { sent: 1, delivered: 2, seen: 3 };
+const MESSAGE_EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+function canEditMessage(message, now = Date.now()) {
+  if (
+    message?.direction !== "outgoing" ||
+    !message.backendId ||
+    !message.text ||
+    message.attachment
+  ) {
+    return false;
+  }
+
+  const createdAt = new Date(message.createdAt).getTime();
+  if (!Number.isFinite(createdAt)) return false;
+
+  const age = now - createdAt;
+  return age >= 0 && age <= MESSAGE_EDIT_WINDOW_MS;
+}
 
 function latestMessageStatus(currentStatus, nextStatus) {
   return (MESSAGE_STATUS_RANK[nextStatus] ?? 0) >
@@ -355,6 +481,19 @@ function isLaterMessage(candidate, current) {
 
 function getRoomPreview(chat, roomSummary, now) {
   const latestMessage = roomSummary?.latestMessage;
+  const latestReaction = roomSummary?.latestReaction;
+  const latestMessageTime = new Date(latestMessage?.createdAt || 0).getTime();
+  const latestReactionTime = new Date(latestReaction?.createdAt || 0).getTime();
+
+  if (
+    latestReaction &&
+    (Number.isNaN(latestMessageTime) || latestReactionTime > latestMessageTime)
+  ) {
+    return {
+      preview: `${latestReaction.emoji} Reacted to your message`,
+      time: formatRelativeTime(latestReaction.createdAt, now),
+    };
+  }
 
   if (!latestMessage) {
     return { preview: chat.preview, time: chat.time };
@@ -416,6 +555,7 @@ function NavigationRail({
   incomingFriendCount,
   unreadNotificationCount,
   profileInitials,
+  profileImage,
   loggingOut,
   onSectionChange,
   onLogout,
@@ -457,6 +597,7 @@ function NavigationRail({
       <div className="flex shrink-0 items-center justify-center gap-1 border-t border-white/[0.06] py-3">
         <Avatar
           size="sm"
+          imageSrc={profileImage}
           initials={profileInitials}
           tone="border border-white/10 bg-[#25282E] text-white"
         />
@@ -659,6 +800,7 @@ function ChatList({
               key={chat.id}
               avatar={{
                 initials: chat.initials,
+                imageSrc: chat.imageSrc,
                 tone: chat.tone,
                 group: chat.group,
               }}
@@ -690,7 +832,64 @@ function ConversationMessages({
   scrollContainerRef,
   onScroll,
   loadingOlderMessages,
+  currentUserId,
+  onReactMessage,
+  onOpenReactionDetails,
+  onReplyMessage,
+  onEditMessage,
+  onDeleteMessageForMe,
+  onDeleteMessageForEveryone,
 }) {
+  const [editEligibilityTime, setEditEligibilityTime] = useState(Date.now());
+  const [highlightedMessageId, setHighlightedMessageId] = useState(null);
+  const highlightTimeoutRef = useRef(null);
+
+  useEffect(
+    () => () => window.clearTimeout(highlightTimeoutRef.current),
+    [],
+  );
+
+  useEffect(() => {
+    const now = Date.now();
+    const nextExpiration = messages.reduce((soonest, message) => {
+      if (!canEditMessage(message, now)) return soonest;
+      const expiration =
+        new Date(message.createdAt).getTime() + MESSAGE_EDIT_WINDOW_MS;
+      return soonest === null || expiration < soonest ? expiration : soonest;
+    }, null);
+
+    if (nextExpiration === null) return undefined;
+
+    const timeoutId = window.setTimeout(
+      () => setEditEligibilityTime(Date.now()),
+      Math.max(0, nextExpiration - now + 25),
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [messages, editEligibilityTime]);
+
+  const eligibilityNow = Math.max(editEligibilityTime, Date.now());
+
+  function handleReplyQuoteClick(messageId) {
+    const original = messages.find(
+      (message) => String(message.backendId) === String(messageId),
+    );
+    if (!original) return false;
+
+    const element = Array.from(
+      scrollContainerRef.current?.querySelectorAll("[data-message-id]") || [],
+    ).find((candidate) => candidate.dataset.messageId === original.id);
+    if (!element) return false;
+
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedMessageId(original.id);
+    window.clearTimeout(highlightTimeoutRef.current);
+    highlightTimeoutRef.current = window.setTimeout(
+      () => setHighlightedMessageId(null),
+      1400,
+    );
+    return true;
+  }
+
   function renderTypingIndicator() {
     if (!isTyping) return null;
 
@@ -736,6 +935,9 @@ function ConversationMessages({
                 messageId={message.id}
                 text={message.text}
                 attachment={message.attachment}
+                replyTo={message.replyTo}
+                reactions={message.reactions}
+                currentUserId={currentUserId}
                 senderType={
                   message.direction === "outgoing" ? "sent" : "received"
                 }
@@ -745,7 +947,34 @@ function ConversationMessages({
                     ? message.status ?? (message.read ? "seen" : undefined)
                     : undefined
                 }
+                edited={message.edited}
                 breakBefore={message.breakBefore}
+                highlighted={highlightedMessageId === message.id}
+                onReact={
+                  message.backendId
+                    ? (emoji) => onReactMessage(message, emoji)
+                    : undefined
+                }
+                onOpenReactionDetails={() => onOpenReactionDetails(message)}
+                onReply={
+                  message.backendId ? () => onReplyMessage(message) : undefined
+                }
+                onReplyQuoteClick={handleReplyQuoteClick}
+                onEdit={
+                  canEditMessage(message, eligibilityNow)
+                    ? () => onEditMessage(message)
+                    : undefined
+                }
+                onDeleteForMe={
+                  message.direction === "outgoing" && message.backendId
+                    ? () => onDeleteMessageForMe(message)
+                    : undefined
+                }
+                onDeleteForEveryone={
+                  message.direction === "outgoing" && message.backendId
+                    ? () => onDeleteMessageForEveryone(message)
+                    : undefined
+                }
               />
               {index === messages.length - 1 && renderTypingIndicator()}
             </Fragment>
@@ -781,12 +1010,24 @@ function ConversationPanel({
   onShowMembers,
   composerLoading,
   composerError,
+  currentUserId,
+  onReactMessage,
+  onOpenReactionDetails,
+  replyingTo,
+  onCancelReply,
+  onReplyMessage,
+  editingMessage,
+  onCancelEdit,
+  onEditMessage,
+  onDeleteMessageForMe,
+  onDeleteMessageForEveryone,
 }) {
   return (
     <section className="relative col-start-2 flex min-h-0 min-w-0 flex-col bg-[#F7F7F5] dark:bg-[#111315] md:col-start-auto">
       <ConversationHeader
         avatar={{
           initials: activeChat.initials,
+          imageSrc: activeChat.imageSrc,
           tone: activeChat.tone,
           group: activeChat.group,
         }}
@@ -820,6 +1061,13 @@ function ConversationPanel({
         scrollContainerRef={scrollContainerRef}
         onScroll={onMessagesScroll}
         loadingOlderMessages={loadingOlderMessages}
+        currentUserId={currentUserId}
+        onReactMessage={onReactMessage}
+        onOpenReactionDetails={onOpenReactionDetails}
+        onReplyMessage={onReplyMessage}
+        onEditMessage={onEditMessage}
+        onDeleteMessageForMe={onDeleteMessageForMe}
+        onDeleteMessageForEveryone={onDeleteMessageForEveryone}
       />
       <MessageComposer
         value={messageValue}
@@ -835,6 +1083,10 @@ function ConversationPanel({
         onCancelRecording={onCancelRecording}
         loading={composerLoading}
         error={composerError}
+        replyingTo={replyingTo}
+        onCancelReply={onCancelReply}
+        editingMessage={editingMessage}
+        onCancelEdit={onCancelEdit}
         placeholder="Type a message..."
       />
     </section>
@@ -842,7 +1094,7 @@ function ConversationPanel({
 }
 
 export default function ChatPlaceholder() {
-  const { user, logout } = useAuth();
+  const { user, logout, updateAuthenticatedUser } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
   const [activeSection, setActiveSection] = useState("rooms");
   const [activeRoom, setActiveRoom] = useState(INITIAL_ROOM);
@@ -864,6 +1116,9 @@ export default function ChatPlaceholder() {
   const [readNotificationIds, setReadNotificationIds] = useState(
     () => new Set(),
   );
+  const [notificationPreferences, setNotificationPreferences] = useState(
+    loadNotificationPreferences,
+  );
   const [chatMessages, setChatMessages] = useState(messages);
   const [roomSummaries, setRoomSummaries] = useState(() =>
     Object.fromEntries(
@@ -878,6 +1133,10 @@ export default function ChatPlaceholder() {
   );
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   const [messageValue, setMessageValue] = useState("");
+  const [editingMessage, setEditingMessage] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [reactionDetailsMessageId, setReactionDetailsMessageId] =
+    useState(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [recordingState, setRecordingState] = useState("idle");
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -921,10 +1180,18 @@ export default function ChatPlaceholder() {
   const recordingStartedAtRef = useRef(0);
   const recordingSessionRef = useRef(0);
   const voiceSendPendingRef = useRef(false);
+  const hiddenMessageIdsRef = useRef(new Set());
 
   const profileName = user?.username || user?.email || "You";
   const profileInitials = profileName.slice(0, 2).toUpperCase();
   const currentUserId = user?._id ?? user?.id;
+  const reactionDetailsMessage = chatMessages.find(
+    (message) => message.id === reactionDetailsMessageId,
+  );
+
+  useEffect(() => {
+    hiddenMessageIdsRef.current = loadHiddenMessageIds(currentUserId);
+  }, [currentUserId]);
   const userChats = availableDmUsers
     .filter(
       (availableUser) =>
@@ -937,6 +1204,7 @@ export default function ChatPlaceholder() {
       recipientId: String(availableUser.userId),
       name: availableUser.username || "User",
       initials: getUserInitials(availableUser.username),
+      imageSrc: resolveUploadedFileUrl(availableUser.profileImage),
       preview: "Start a conversation",
       time: "",
       tone:
@@ -963,6 +1231,7 @@ export default function ChatPlaceholder() {
       recipientId: String(member.userId),
       name: member.username || "User",
       initials: getUserInitials(member.username),
+      imageSrc: resolveUploadedFileUrl(member.profileImage),
       preview: "Message",
       time: "",
       tone:
@@ -970,23 +1239,25 @@ export default function ChatPlaceholder() {
     }))
     .filter((chat) => chat.room);
   const allChats = [...chats, ...dmChats];
-  const friendRequestNotifications = incomingFriendRequests.map((request) => ({
-    id: `friend-request:${request.requestId}`,
-    type: "friend_request",
-    name: request.username || "User",
-    title: `${request.username || "Someone"} sent you a friend request`,
-    subtitle: "Friend request",
-    createdAt: request.createdAt,
-    requestId: request.requestId,
-  }));
-  const acceptedFriendNotifications = friendActivityNotifications.map(
-    (notification) => ({
-      ...notification,
-      name: notification.username,
-      title: `${notification.username} accepted your friend request`,
-      subtitle: "You're now friends",
-    }),
-  );
+  const friendRequestNotifications = notificationPreferences.friendRequests
+    ? incomingFriendRequests.map((request) => ({
+        id: `friend-request:${request.requestId}`,
+        type: "friend_request",
+        name: request.username || "User",
+        title: `${request.username || "Someone"} sent you a friend request`,
+        subtitle: "Friend request",
+        createdAt: request.createdAt,
+        requestId: request.requestId,
+      }))
+    : [];
+  const acceptedFriendNotifications = notificationPreferences.friendRequests
+    ? friendActivityNotifications.map((notification) => ({
+        ...notification,
+        name: notification.username,
+        title: `${notification.username} accepted your friend request`,
+        subtitle: "You're now friends",
+      }))
+    : [];
   const conversationNotifications = Object.entries(roomSummaries)
     .filter(([, summary]) => Number(summary?.unreadCount) > 0)
     .map(([room, summary]) => {
@@ -996,6 +1267,12 @@ export default function ChatPlaceholder() {
 
       const unreadCount = Math.max(1, Number(summary.unreadCount) || 0);
       const isPrivate = Boolean(chat.recipientId || latestMessage?.isPrivate);
+      if (
+        (isPrivate && !notificationPreferences.directMessages) ||
+        (!isPrivate && !notificationPreferences.roomMessages)
+      ) {
+        return null;
+      }
       const attachmentLabel = latestMessage?.attachment
         ? latestMessage.attachment.mimeType?.startsWith("audio/")
           ? "Voice message"
@@ -1042,10 +1319,10 @@ export default function ChatPlaceholder() {
         ? userChats
         : activeSection === "members"
           ? roomMemberChats
-          : activeSection === "profile" && activeProfileChat
+          : activeSection === "member_profile" && activeProfileChat
             ? [activeProfileChat]
             : chats;
-  const peopleMode = ["friends", "members", "profile"].includes(
+  const peopleMode = ["friends", "members", "member_profile"].includes(
     activeSection,
   );
   const dmEmptyMessage = loadingDmUsers
@@ -1058,7 +1335,7 @@ export default function ChatPlaceholder() {
         ? "Friends"
         : activeSection === "members"
           ? "Room Members"
-          : activeSection === "profile"
+          : activeSection === "member_profile"
             ? "Profile"
             : "Chats";
   const listEmptyMessage =
@@ -1099,6 +1376,7 @@ export default function ChatPlaceholder() {
                 {
                   userId: String(availableUser.userId),
                   username: availableUser.username || "User",
+                  profileImage: availableUser.profileImage || "",
                 },
               ]),
           ).values(),
@@ -1228,6 +1506,7 @@ export default function ChatPlaceholder() {
             .map((availableUser) => ({
               userId: String(availableUser.userId),
               username: availableUser.username || "User",
+              profileImage: availableUser.profileImage || "",
             }));
 
           setAvailableDmUsers((currentUsers) =>
@@ -1278,6 +1557,7 @@ export default function ChatPlaceholder() {
 
     function handleSocketError(error) {
       console.error("[socket] error", error?.message ?? error);
+      setAttachmentError(error?.message ?? "Unable to send message.");
     }
 
     function handleReceiveMessage(incomingMessage) {
@@ -1286,6 +1566,7 @@ export default function ChatPlaceholder() {
       if (!message || receivedSocketMessageIdsRef.current.has(message.id)) {
         return;
       }
+      if (hiddenMessageIdsRef.current.has(message.backendId)) return;
 
       receivedSocketMessageIdsRef.current.add(message.id);
 
@@ -1393,6 +1674,105 @@ export default function ChatPlaceholder() {
       });
     }
 
+    function handleMessageEdited(updatedMessage) {
+      const normalized = normalizeSocketMessage(updatedMessage, currentUserId);
+      if (!normalized) return;
+
+      setChatMessages((currentMessages) =>
+        currentMessages.map((message) =>
+          message.id === normalized.id ? { ...message, ...normalized } : message,
+        ),
+      );
+      updateRoomLatestMessage(normalized);
+    }
+
+    function handleMessageDeleted({ id, room } = {}) {
+      if (!id) return;
+      removeMessageFromUi(String(id), room);
+    }
+
+    function handleMessageReactionsUpdated({
+      messageId,
+      room,
+      reactions,
+      reactionsUpdatedAt,
+      activity,
+    } = {}) {
+      if (!messageId) return;
+      const normalizedId = `socket-${messageId}`;
+      const normalizedReactions = normalizeMessageReactions(reactions);
+      const incomingReactionState = {
+        reactions: normalizedReactions,
+        reactionsUpdatedAt,
+      };
+
+      setChatMessages((currentMessages) =>
+        currentMessages.map((message) =>
+          message.id === normalizedId
+            ? {
+                ...message,
+                ...getNewestReactionState(message, incomingReactionState),
+              }
+            : message,
+        ),
+      );
+      setRoomSummaries((currentSummaries) => {
+        const summary = currentSummaries[room] ?? {
+          unreadCount: 0,
+          latestMessage: null,
+        };
+        let latestReaction = summary.latestReaction ?? null;
+        const activityTime = new Date(activity?.createdAt || 0).getTime();
+        const latestActivityTime = new Date(
+          latestReaction?.createdAt || 0,
+        ).getTime();
+
+        if (
+          activity?.action === "added" &&
+          String(activity.targetSenderId) === String(currentUserId) &&
+          String(activity.userId) !== String(currentUserId) &&
+          activityTime >= latestActivityTime
+        ) {
+          latestReaction = { ...activity, messageId: String(messageId) };
+        } else if (
+          activity?.action === "removed" &&
+          latestReaction?.messageId === String(messageId) &&
+          latestReaction?.emoji === activity.emoji &&
+          String(latestReaction?.userId) === String(activity.userId) &&
+          activityTime >= latestActivityTime
+        ) {
+          latestReaction = null;
+        }
+
+        const latestMessage =
+          summary.latestMessage?.id === normalizedId
+            ? {
+                ...summary.latestMessage,
+                ...getNewestReactionState(
+                  summary.latestMessage,
+                  incomingReactionState,
+                ),
+              }
+            : summary.latestMessage;
+
+        if (
+          latestMessage === summary.latestMessage &&
+          latestReaction === summary.latestReaction
+        ) {
+          return currentSummaries;
+        }
+
+        return {
+          ...currentSummaries,
+          [room]: {
+            ...summary,
+            latestMessage,
+            latestReaction,
+          },
+        };
+      });
+    }
+
     function handleTypingStart({ room, socketId } = {}) {
       if (
         String(room) !== activeRoomRef.current ||
@@ -1446,7 +1826,13 @@ export default function ChatPlaceholder() {
       setActiveRoomMembers(otherMembers);
     }
 
-    function handleUserJoined({ room, socketId, userId, username } = {}) {
+    function handleUserJoined({
+      room,
+      socketId,
+      userId,
+      username,
+      profileImage,
+    } = {}) {
       if (
         String(room) !== activeRoomRef.current ||
         !socketId ||
@@ -1468,7 +1854,12 @@ export default function ChatPlaceholder() {
             ? currentMembers
             : [
                 ...currentMembers,
-                { socketId, userId: String(userId), username },
+                {
+                  socketId,
+                  userId: String(userId),
+                  username,
+                  profileImage: profileImage || "",
+                },
               ],
         );
       }
@@ -1489,7 +1880,7 @@ export default function ChatPlaceholder() {
       );
     }
 
-    function handleUserOnline({ userId, username } = {}) {
+    function handleUserOnline({ userId, username, profileImage } = {}) {
       if (userId != null && String(userId) === String(currentUserId)) return;
 
       if (userId != null) {
@@ -1502,17 +1893,30 @@ export default function ChatPlaceholder() {
           if (existingIndex === -1) {
             return [
               ...currentUsers,
-              { userId: normalizedUserId, username: username || "User" },
+              {
+                userId: normalizedUserId,
+                username: username || "User",
+                profileImage: profileImage || "",
+              },
             ];
           }
 
-          if (!username || currentUsers[existingIndex].username === username) {
+          if (
+            (!username || currentUsers[existingIndex].username === username) &&
+            (profileImage === undefined ||
+              currentUsers[existingIndex].profileImage === profileImage)
+          ) {
             return currentUsers;
           }
 
           return currentUsers.map((availableUser, index) =>
             index === existingIndex
-              ? { ...availableUser, username }
+              ? {
+                  ...availableUser,
+                  username,
+                  profileImage:
+                    profileImage ?? availableUser.profileImage ?? "",
+                }
               : availableUser,
           );
         });
@@ -1539,6 +1943,52 @@ export default function ChatPlaceholder() {
 
         return nextKeys.size === currentKeys.size ? currentKeys : nextKeys;
       });
+    }
+
+    function handleUserProfileUpdated({
+      userId,
+      username,
+      profileImage,
+    } = {}) {
+      if (userId == null) return;
+      const normalizedUserId = String(userId);
+      const profileChanges = {
+        username: username || "User",
+        profileImage: profileImage || "",
+      };
+
+      setAvailableDmUsers((currentUsers) =>
+        currentUsers.map((availableUser) =>
+          availableUser.userId === normalizedUserId
+            ? { ...availableUser, ...profileChanges }
+            : availableUser,
+        ),
+      );
+      setActiveRoomMembers((currentMembers) =>
+        currentMembers.map((member) =>
+          String(member.userId) === normalizedUserId
+            ? { ...member, ...profileChanges }
+            : member,
+        ),
+      );
+      setActiveProfileChat((currentChat) =>
+        String(currentChat?.recipientId) === normalizedUserId
+          ? {
+              ...currentChat,
+              name: profileChanges.username,
+              initials: getUserInitials(profileChanges.username),
+              imageSrc: resolveUploadedFileUrl(profileChanges.profileImage),
+            }
+          : currentChat,
+      );
+      setOnlineUserKeys((currentKeys) => {
+        const nextKeys = new Set(currentKeys);
+        nextKeys.add(`id:${normalizedUserId}`);
+        const nameKey = presenceNameKey(profileChanges.username);
+        if (nameKey) nextKeys.add(nameKey);
+        return nextKeys;
+      });
+      setFriendsRefreshVersion((version) => version + 1);
     }
 
     function handleFriendsUpdated(notification) {
@@ -1579,6 +2029,9 @@ export default function ChatPlaceholder() {
     socket.on("new_message", handleReceiveMessage);
     socket.on("message_notification", handleReceiveMessage);
     socket.on("message_status_update", handleMessageStatusUpdate);
+    socket.on("message_edited", handleMessageEdited);
+    socket.on("message_deleted", handleMessageDeleted);
+    socket.on("message_reactions_updated", handleMessageReactionsUpdated);
     socket.on("typing_start", handleTypingStart);
     socket.on("typing_stop", handleTypingStop);
     socket.on("room_joined", handleRoomJoined);
@@ -1588,6 +2041,7 @@ export default function ChatPlaceholder() {
     socket.on("user_online", handleUserOnline);
     socket.on("user_offline", handleUserOffline);
     socket.on("friends_updated", handleFriendsUpdated);
+    socket.on("user_profile_updated", handleUserProfileUpdated);
 
     return () => {
       stopTyping();
@@ -1602,6 +2056,9 @@ export default function ChatPlaceholder() {
       socket.off("new_message", handleReceiveMessage);
       socket.off("message_notification", handleReceiveMessage);
       socket.off("message_status_update", handleMessageStatusUpdate);
+      socket.off("message_edited", handleMessageEdited);
+      socket.off("message_deleted", handleMessageDeleted);
+      socket.off("message_reactions_updated", handleMessageReactionsUpdated);
       socket.off("typing_start", handleTypingStart);
       socket.off("typing_stop", handleTypingStop);
       socket.off("room_joined", handleRoomJoined);
@@ -1611,11 +2068,12 @@ export default function ChatPlaceholder() {
       socket.off("user_online", handleUserOnline);
       socket.off("user_offline", handleUserOffline);
       socket.off("friends_updated", handleFriendsUpdated);
+      socket.off("user_profile_updated", handleUserProfileUpdated);
       socket.disconnect();
       socketRef.current = null;
       joinedRoomRef.current = null;
     };
-  }, [currentUserId]);
+  }, [currentUserId, user?.profileImage, user?.username]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1642,7 +2100,9 @@ export default function ChatPlaceholder() {
           .map((message) => normalizeSocketMessage(message, currentUserId))
           .filter(
             (message) =>
-              message && String(message.room) === String(activeRoom),
+              message &&
+              String(message.room) === String(activeRoom) &&
+              !hiddenMessageIdsRef.current.has(message.backendId),
           );
 
         if (history.length > 0) {
@@ -1675,6 +2135,7 @@ export default function ChatPlaceholder() {
                     existingMessage.status,
                     message.status,
                   ),
+                  ...getNewestReactionState(existingMessage, message),
                 };
               }
             });
@@ -1807,6 +2268,7 @@ export default function ChatPlaceholder() {
                 roomSummary.latestMessage.status,
                 message.status,
               ),
+              ...getNewestReactionState(message, roomSummary.latestMessage),
             }
           : message;
 
@@ -1815,6 +2277,53 @@ export default function ChatPlaceholder() {
         [message.room]: { ...roomSummary, latestMessage },
       };
     });
+  }
+
+  function removeMessageFromUi(backendId, room) {
+    const normalizedId = `socket-${backendId}`;
+    setChatMessages((currentMessages) => {
+      const removedMessage = currentMessages.find(
+        (message) => message.id === normalizedId,
+      );
+      const remainingMessages = currentMessages.filter(
+        (message) => message.id !== normalizedId,
+      );
+
+      if (removedMessage) {
+        const latestRemaining = [...remainingMessages]
+          .reverse()
+          .find((message) => message.room === (room || removedMessage.room));
+        setRoomSummaries((currentSummaries) => {
+          const summary = currentSummaries[room || removedMessage.room];
+          const removesLatestMessage = summary?.latestMessage?.id === normalizedId;
+          const removesLatestReaction =
+            summary?.latestReaction?.messageId === String(backendId);
+          if (!removesLatestMessage && !removesLatestReaction) {
+            return currentSummaries;
+          }
+          return {
+            ...currentSummaries,
+            [room || removedMessage.room]: {
+              ...summary,
+              latestMessage: removesLatestMessage
+                ? latestRemaining || null
+                : summary.latestMessage,
+              latestReaction: removesLatestReaction
+                ? null
+                : summary.latestReaction,
+            },
+          };
+        });
+      }
+
+      return remainingMessages;
+    });
+    setEditingMessage((currentMessage) =>
+      currentMessage?.backendId === backendId ? null : currentMessage,
+    );
+    setReplyingTo((currentMessage) =>
+      currentMessage?.backendId === backendId ? null : currentMessage,
+    );
   }
 
   function incrementRoomUnread(room) {
@@ -1938,7 +2447,10 @@ export default function ChatPlaceholder() {
       const olderMessages = historyPage.messages
         .map((message) => normalizeSocketMessage(message, currentUserId))
         .filter(
-          (message) => message && String(message.room) === String(room),
+          (message) =>
+            message &&
+            String(message.room) === String(room) &&
+            !hiddenMessageIdsRef.current.has(message.backendId),
         );
 
       oldestPageRef.current = page;
@@ -2300,16 +2812,37 @@ export default function ChatPlaceholder() {
     setActiveRoom(room);
     setActiveDmRecipientId(recipientId);
     setChatMessages([]);
+    setEditingMessage(null);
+    setReplyingTo(null);
+    setReactionDetailsMessageId(null);
+    setMessageValue("");
     cancelVoiceRecording();
     setSelectedFile(null);
     setAttachmentError("");
   }
 
   function handleSectionChange(section) {
-    if (["rooms", "dms", "friends", "notifications"].includes(section)) {
+    if (
+      [
+        "rooms",
+        "dms",
+        "friends",
+        "notifications",
+        "profile",
+        "settings",
+      ].includes(section)
+    ) {
       if (section === "friends") setFriendsInitialTab("friends");
       setActiveSection(section);
     }
+  }
+
+  function handleNotificationPreferenceChange(key, enabled) {
+    setNotificationPreferences((currentPreferences) => {
+      const nextPreferences = { ...currentPreferences, [key]: enabled };
+      saveNotificationPreferences(nextPreferences);
+      return nextPreferences;
+    });
   }
 
   function handleMessageUser(chat) {
@@ -2391,7 +2924,7 @@ export default function ChatPlaceholder() {
     }
 
     setActiveProfileChat(chat);
-    setActiveSection("profile");
+    setActiveSection("member_profile");
   }
 
   function handleShowMembers() {
@@ -2429,6 +2962,80 @@ export default function ChatPlaceholder() {
     setAttachmentError("");
   }
 
+  function handleStartEditingMessage(message) {
+    if (!canEditMessage(message)) return;
+    cancelVoiceRecording();
+    setReplyingTo(null);
+    setSelectedFile(null);
+    setAttachmentError("");
+    setEditingMessage(message);
+    setMessageValue(message.text);
+  }
+
+  function handleCancelEditingMessage() {
+    setEditingMessage(null);
+    setMessageValue("");
+    setAttachmentError("");
+  }
+
+  function handleStartReplyingToMessage(message) {
+    if (!message?.backendId) return;
+    cancelVoiceRecording();
+    if (editingMessage) setMessageValue("");
+    setEditingMessage(null);
+    setReplyingTo(message);
+    setAttachmentError("");
+  }
+
+  function handleCancelReply() {
+    setReplyingTo(null);
+    setAttachmentError("");
+  }
+
+  function handleReactToMessage(message, emoji, action = "set") {
+    const socket = socketRef.current;
+    if (!socket?.connected || !message?.backendId || !message.room) {
+      setAttachmentError("Unable to react while disconnected.");
+      return;
+    }
+
+    setAttachmentError("");
+    socket.emit("toggle_message_reaction", {
+      room: message.room,
+      messageId: message.backendId,
+      emoji,
+      action,
+    });
+  }
+
+  function handleDeleteMessageForMe(message) {
+    if (message?.direction !== "outgoing" || !message.backendId) return;
+    const nextHiddenIds = new Set(hiddenMessageIdsRef.current);
+    nextHiddenIds.add(String(message.backendId));
+    hiddenMessageIdsRef.current = nextHiddenIds;
+    saveHiddenMessageIds(currentUserId, nextHiddenIds);
+    if (editingMessage?.backendId === message.backendId) {
+      handleCancelEditingMessage();
+    }
+    removeMessageFromUi(String(message.backendId), message.room);
+  }
+
+  async function handleDeleteMessageForEveryone(message) {
+    if (message?.direction !== "outgoing" || !message.backendId) return;
+    setAttachmentError("");
+    try {
+      await deleteMessageRequest(message.backendId);
+      if (editingMessage?.backendId === message.backendId) {
+        handleCancelEditingMessage();
+      }
+      removeMessageFromUi(String(message.backendId), message.room);
+    } catch (error) {
+      setAttachmentError(
+        error.response?.data?.error ?? error.message ?? "Unable to delete message.",
+      );
+    }
+  }
+
   async function handleMessageSend(value, options = {}) {
     const text = value?.trim();
     const socket = socketRef.current;
@@ -2436,6 +3043,35 @@ export default function ChatPlaceholder() {
     const voice = options.voice === true;
 
     if ((!text && !file) || sendInFlightRef.current) return;
+
+    if (editingMessage) {
+      if (!text) return;
+      sendInFlightRef.current = true;
+      setSendingMessage(true);
+      setAttachmentError("");
+      try {
+        const updated = await editMessageRequest(editingMessage.backendId, text);
+        const normalized = normalizeSocketMessage(updated, currentUserId);
+        setChatMessages((currentMessages) =>
+          currentMessages.map((message) =>
+            message.id === editingMessage.id
+              ? { ...message, ...normalized }
+              : message,
+          ),
+        );
+        if (normalized) updateRoomLatestMessage(normalized);
+        setEditingMessage(null);
+        setMessageValue("");
+      } catch (error) {
+        setAttachmentError(
+          error.response?.data?.error ?? error.message ?? "Unable to edit message.",
+        );
+      } finally {
+        sendInFlightRef.current = false;
+        setSendingMessage(false);
+      }
+      return;
+    }
 
     if (!socket?.connected) {
       if (voice) cancelVoiceRecording();
@@ -2472,16 +3108,19 @@ export default function ChatPlaceholder() {
       }
 
       const recipientId = activeDmRecipientIdRef.current;
+      const replyToMessageId = replyingTo?.backendId;
       const payload = recipientId
         ? {
             recipientId,
             ...(text ? { message: text } : {}),
             ...(attachment ? { attachment } : {}),
+            ...(replyToMessageId ? { replyToMessageId } : {}),
           }
         : {
             room,
             ...(text ? { message: text } : {}),
             ...(attachment ? { attachment } : {}),
+            ...(replyToMessageId ? { replyToMessageId } : {}),
           };
       const eventName = recipientId ? "send_private_message" : "send_message";
 
@@ -2489,6 +3128,7 @@ export default function ChatPlaceholder() {
       socket.emit(eventName, payload);
       setMessageValue("");
       setSelectedFile(null);
+      setReplyingTo(null);
       if (voice) cancelVoiceRecording();
     } catch (error) {
       if (voice) cancelVoiceRecording();
@@ -2512,6 +3152,7 @@ export default function ChatPlaceholder() {
           incomingFriendCount={incomingFriendCount}
           unreadNotificationCount={unreadNotificationCount}
           profileInitials={profileInitials}
+          profileImage={resolveUploadedFileUrl(user?.profileImage)}
           loggingOut={loggingOut}
           onSectionChange={handleSectionChange}
           onLogout={handleLogout}
@@ -2528,6 +3169,19 @@ export default function ChatPlaceholder() {
           <NotificationsPage
             notifications={notifications}
             onOpen={handleOpenNotification}
+          />
+        ) : activeSection === "profile" ? (
+          <ProfilePage
+            user={user}
+            online={socketConnected}
+            onProfileUpdated={updateAuthenticatedUser}
+          />
+        ) : activeSection === "settings" ? (
+          <SettingsPage
+            preferences={notificationPreferences}
+            onPreferenceChange={handleNotificationPreferenceChange}
+            loggingOut={loggingOut}
+            onLogout={handleLogout}
           />
         ) : (
           <>
@@ -2568,10 +3222,33 @@ export default function ChatPlaceholder() {
               onShowMembers={handleShowMembers}
               composerLoading={sendingMessage}
               composerError={attachmentError}
+              currentUserId={currentUserId}
+              onReactMessage={handleReactToMessage}
+              onOpenReactionDetails={(message) =>
+                setReactionDetailsMessageId(message.id)
+              }
+              replyingTo={replyingTo}
+              onCancelReply={handleCancelReply}
+              onReplyMessage={handleStartReplyingToMessage}
+              editingMessage={editingMessage}
+              onCancelEdit={handleCancelEditingMessage}
+              onEditMessage={handleStartEditingMessage}
+              onDeleteMessageForMe={handleDeleteMessageForMe}
+              onDeleteMessageForEveryone={handleDeleteMessageForEveryone}
             />
           </>
         )}
       </div>
+      {reactionDetailsMessage && (
+        <ReactionDetailsModal
+          message={reactionDetailsMessage}
+          currentUserId={currentUserId}
+          onClose={() => setReactionDetailsMessageId(null)}
+          onRemove={(emoji) =>
+            handleReactToMessage(reactionDetailsMessage, emoji, "remove")
+          }
+        />
+      )}
     </main>
   );
 }

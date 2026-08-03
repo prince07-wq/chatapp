@@ -4,9 +4,16 @@ import {
   CheckCheck,
   Download,
   FileText,
+  MoreHorizontal,
   Pause,
+  Pencil,
   Play,
+  Plus,
+  Reply as ReplyIcon,
+  SmilePlus,
+  Trash2,
 } from "lucide-react";
+import { getReplyPreviewText } from "../../utils/messageReply.js";
 
 function formatAudioDuration(value) {
   if (!Number.isFinite(value) || value < 0) return "0:00";
@@ -19,6 +26,27 @@ const VOICE_WAVEFORM = [
   8, 14, 20, 11, 17, 24, 13, 19, 9, 22, 16, 26, 12, 18, 23, 10, 15, 21,
   8, 17, 25, 13, 20, 11,
 ];
+
+const REACTION_OPTIONS = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
+const MORE_REACTION_OPTIONS = [
+  "😀", "😊", "😍", "🤔", "👏", "🙏", "🎉", "💯", "✅",
+  "👀", "🤝", "🤯", "🥳", "😡", "🤗", "💀", "🚀", "💔",
+];
+
+function isSingleEmoji(value) {
+  const emoji = value.trim();
+  if (!emoji || emoji.length > 32) return false;
+
+  const segments = [
+    ...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(emoji),
+  ];
+  return (
+    segments.length === 1 &&
+    (/\p{Extended_Pictographic}/u.test(emoji) ||
+      /\p{Regional_Indicator}/u.test(emoji) ||
+      /^[#*0-9]\uFE0F?\u20E3$/u.test(emoji))
+  );
+}
 
 function AudioAttachment({ attachment, sent }) {
   const audioRef = useRef(null);
@@ -163,21 +191,194 @@ function MessageBubble({
   edited = false,
   deliveryStatus,
   attachment,
+  replyTo,
+  reactions = [],
+  currentUserId,
   breakBefore = false,
+  highlighted = false,
+  onReply,
+  onReact,
+  onOpenReactionDetails,
+  onReplyQuoteClick,
+  onEdit,
+  onDeleteForMe,
+  onDeleteForEveryone,
 }) {
   const sent = senderType === "sent";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
+  const [moreReactionsOpen, setMoreReactionsOpen] = useState(false);
+  const [customEmoji, setCustomEmoji] = useState("");
+  const [quoteUnavailable, setQuoteUnavailable] = useState(false);
+  const menuRef = useRef(null);
   const imageAttachment = attachment?.mimeType?.startsWith("image/");
   const audioAttachment = attachment?.mimeType?.startsWith("audio/");
+  const visibleReactions = reactions.slice(0, 2);
+  const hiddenReactionCount = Math.max(0, reactions.length - 2);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    function closeMenu(event) {
+      if (!menuRef.current?.contains(event.target)) {
+        setMenuOpen(false);
+        setReactionPickerOpen(false);
+        setMoreReactionsOpen(false);
+      }
+    }
+    function handleEscape(event) {
+      if (event.key !== "Escape") return;
+      setMenuOpen(false);
+      setReactionPickerOpen(false);
+      setMoreReactionsOpen(false);
+    }
+    document.addEventListener("mousedown", closeMenu);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeMenu);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [menuOpen]);
+
+  function selectReaction(emoji) {
+    setMenuOpen(false);
+    setReactionPickerOpen(false);
+    setMoreReactionsOpen(false);
+    setCustomEmoji("");
+    onReact?.(emoji);
+  }
+
+  function handleQuoteClick() {
+    if (onReplyQuoteClick?.(replyTo?.messageId) === false) {
+      setQuoteUnavailable(true);
+    }
+  }
 
   return (
     <div
       data-message-id={messageId}
       className={[
-        "flex",
+        "group relative flex",
         sent ? "justify-end" : "justify-start",
         breakBefore ? "mt-7" : "mt-2",
       ].join(" ")}
     >
+      {(onReply || onReact || (sent && (onEdit || onDeleteForMe || onDeleteForEveryone))) && (
+        <div ref={menuRef} className="relative mr-1 self-start">
+          <button
+            type="button"
+            aria-label="Message actions"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((open) => !open)}
+            className="flex h-8 w-8 items-center justify-center rounded-[10px] text-[#969AA1] opacity-0 transition-opacity hover:bg-black/[0.04] focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/30 group-hover:opacity-100 dark:hover:bg-white/[0.06]"
+          >
+            <MoreHorizontal size={17} />
+          </button>
+          {menuOpen && (
+            <div className={`absolute top-9 z-20 w-44 rounded-[12px] border border-[#E6E8E5] bg-white p-1.5 text-left shadow-lg dark:border-white/[0.08] dark:bg-[#20242B] ${sent ? "right-0" : "left-0"}`}>
+              {onReact && (
+                <>
+                  <button type="button" onClick={() => setReactionPickerOpen((open) => !open)} className="flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-[12px] font-medium text-[#555B63] hover:bg-[#F7F7F5] dark:text-[#C5C9CF] dark:hover:bg-white/[0.06]">
+                    <SmilePlus size={14} /> React
+                  </button>
+                  {reactionPickerOpen && (
+                    <div className="grid grid-cols-7 gap-0.5 border-b border-[#ECEDEB] px-0.5 pb-1.5 dark:border-white/[0.06]" aria-label="Choose a reaction">
+                      {REACTION_OPTIONS.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          aria-label={`React with ${emoji}`}
+                          onClick={() => selectReaction(emoji)}
+                          className="flex h-5 w-5 items-center justify-center rounded-md text-[14px] hover:bg-[#F1F2F0] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/35 dark:hover:bg-white/[0.08]"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        aria-label="More reactions"
+                        aria-expanded={moreReactionsOpen}
+                        onClick={() => setMoreReactionsOpen((open) => !open)}
+                        className="flex h-5 w-5 items-center justify-center rounded-md border border-[#DFE1DE] text-[#737880] hover:bg-[#F1F2F0] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/35 dark:border-white/[0.1] dark:text-[#B4B8BF] dark:hover:bg-white/[0.08]"
+                      >
+                        <Plus size={12} strokeWidth={2} />
+                      </button>
+                    </div>
+                  )}
+                  {reactionPickerOpen && moreReactionsOpen && (
+                    <div
+                      role="dialog"
+                      aria-label="More emoji reactions"
+                      className={[
+                        "absolute top-0 z-30 w-52 rounded-[12px] border border-[#E6E8E5] bg-white p-2 shadow-xl dark:border-white/[0.08] dark:bg-[#20242B]",
+                        sent ? "right-full mr-2" : "left-full ml-2",
+                      ].join(" ")}
+                    >
+                      <div className="grid grid-cols-6 gap-1">
+                        {MORE_REACTION_OPTIONS.map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            aria-label={`React with ${emoji}`}
+                            onClick={() => selectReaction(emoji)}
+                            className="flex h-7 w-7 items-center justify-center rounded-[7px] text-[17px] hover:bg-[#F1F2F0] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/35 dark:hover:bg-white/[0.08]"
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                      <form
+                        className="mt-2 flex gap-1.5 border-t border-[#ECEDEB] pt-2 dark:border-white/[0.06]"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          const emoji = customEmoji.trim();
+                          if (isSingleEmoji(emoji)) selectReaction(emoji);
+                        }}
+                      >
+                        <input
+                          type="text"
+                          value={customEmoji}
+                          onChange={(event) => setCustomEmoji(event.target.value)}
+                          maxLength={32}
+                          aria-label="Paste any emoji"
+                          placeholder="Paste emoji"
+                          className="h-8 min-w-0 flex-1 rounded-[8px] border border-[#E2E4E1] bg-[#F7F7F5] px-2 text-[12px] text-[#35383D] outline-none focus:border-[#3B82F6]/40 focus:ring-2 focus:ring-[#3B82F6]/10 dark:border-white/[0.08] dark:bg-[#292D34] dark:text-[#ECEEF1]"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!isSingleEmoji(customEmoji)}
+                          className="h-8 rounded-[8px] bg-[#3B82F6] px-2.5 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Add
+                        </button>
+                      </form>
+                    </div>
+                  )}
+                </>
+              )}
+              {onReply && (
+                <button type="button" onClick={() => { setMenuOpen(false); onReply(); }} className="flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-[12px] font-medium text-[#555B63] hover:bg-[#F7F7F5] dark:text-[#C5C9CF] dark:hover:bg-white/[0.06]">
+                  <ReplyIcon size={14} /> Reply
+                </button>
+              )}
+              {onEdit && (
+                <button type="button" onClick={() => { setMenuOpen(false); onEdit(); }} className="flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-[12px] font-medium text-[#555B63] hover:bg-[#F7F7F5] dark:text-[#C5C9CF] dark:hover:bg-white/[0.06]">
+                  <Pencil size={14} /> Edit
+                </button>
+              )}
+              {onDeleteForMe && (
+                <button type="button" onClick={() => { setMenuOpen(false); onDeleteForMe(); }} className="flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-[12px] font-medium text-[#555B63] hover:bg-[#F7F7F5] dark:text-[#C5C9CF] dark:hover:bg-white/[0.06]">
+                  <Trash2 size={14} /> Delete for me
+                </button>
+              )}
+              {onDeleteForEveryone && (
+                <button type="button" onClick={() => { setMenuOpen(false); onDeleteForEveryone(); }} className="flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-[12px] font-medium text-[#B45E5E] hover:bg-[#FBF3F3] dark:text-[#D39494] dark:hover:bg-[#302526]">
+                  <Trash2 size={14} /> Delete for everyone
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <div
         className={[
           "flex max-w-[82%] flex-col sm:max-w-[70%] lg:max-w-[62%]",
@@ -186,13 +387,38 @@ function MessageBubble({
       >
         <div
           className={[
-            "rounded-[16px] px-4 py-2.5 text-[14px] leading-6 sm:text-[15px]",
+            "relative rounded-[16px] px-4 py-2.5 text-[14px] leading-6 sm:text-[15px]",
             "shadow-[0_2px_7px_rgba(20,22,26,0.025)]",
             sent
               ? "rounded-br-[6px] bg-[#3B82F6] text-white"
               : "rounded-bl-[6px] border border-black/[0.035] bg-white text-[#25272B] dark:border-white/[0.05] dark:bg-[#20242B] dark:text-[#ECEEF1]",
+            highlighted
+              ? "ring-2 ring-[#3B82F6]/40 ring-offset-2 ring-offset-[#F7F7F5] dark:ring-offset-[#111315]"
+              : "",
+            reactions.length > 0 ? "mb-3 pb-4" : "",
           ].join(" ")}
         >
+          {replyTo?.messageId && (
+            <button
+              type="button"
+              onClick={handleQuoteClick}
+              className={[
+                "mb-2 block w-full min-w-0 rounded-[9px] border-l-2 px-2.5 py-1.5 text-left",
+                sent
+                  ? "border-white/80 bg-white/15 hover:bg-white/20"
+                  : "border-[#3B82F6] bg-black/[0.035] hover:bg-black/[0.055] dark:bg-white/[0.06] dark:hover:bg-white/[0.09]",
+              ].join(" ")}
+            >
+              <span className={sent ? "block truncate text-[10px] font-semibold text-white/90" : "block truncate text-[10px] font-semibold text-[#3B82F6]"}>
+                {replyTo.senderUsername || "Unknown user"}
+              </span>
+              <span className={sent ? "block truncate text-[11px] leading-4 text-white/75" : "block truncate text-[11px] leading-4 text-[#73777E] dark:text-[#A3A8B0]"}>
+                {quoteUnavailable
+                  ? "Original message unavailable"
+                  : getReplyPreviewText(replyTo)}
+              </span>
+            </button>
+          )}
           {imageAttachment && (
             <a
               href={attachment.fileUrl}
@@ -233,6 +459,44 @@ function MessageBubble({
           )}
           {text && (
             <span className={attachment ? "mt-2 block" : undefined}>{text}</span>
+          )}
+          {reactions.length > 0 && (
+            <div className="absolute -bottom-3 right-2 z-10 flex max-w-[calc(100%-16px)] flex-nowrap justify-end gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Message reactions">
+              {visibleReactions.map((reaction) => {
+                const reactedByCurrentUser = reaction.userIds.some(
+                  (userId) => String(userId) === String(currentUserId),
+                );
+
+                return (
+                  <button
+                    key={reaction.emoji}
+                    type="button"
+                    onClick={onOpenReactionDetails}
+                    aria-pressed={reactedByCurrentUser}
+                    aria-label={`${reaction.emoji} reaction, ${reaction.userIds.length}`}
+                    className={[
+                      "flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-[11px] leading-none shadow-sm transition-colors",
+                      reactedByCurrentUser
+                        ? "border-[#3B82F6]/45 bg-[#EAF2FF] text-[#2F6FD1] dark:bg-[#21334F] dark:text-[#8AB4F8]"
+                        : "border-[#D9DCD8] bg-white text-[#565C64] hover:bg-[#F7F7F5] dark:border-white/[0.12] dark:bg-[#252930] dark:text-[#D1D4D9] dark:hover:bg-[#2B3038]",
+                    ].join(" ")}
+                  >
+                    <span>{reaction.emoji}</span>
+                    <span className="tabular-nums">{reaction.userIds.length}</span>
+                  </button>
+                );
+              })}
+              {hiddenReactionCount > 0 && (
+                <button
+                  type="button"
+                  onClick={onOpenReactionDetails}
+                  aria-label={`View ${hiddenReactionCount} more reactions`}
+                  className="flex h-6 shrink-0 items-center rounded-full border border-[#D9DCD8] bg-white px-2 text-[11px] font-semibold leading-none text-[#656A72] shadow-sm hover:bg-[#F7F7F5] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/35 dark:border-white/[0.12] dark:bg-[#252930] dark:text-[#D1D4D9] dark:hover:bg-[#2B3038]"
+                >
+                  +{hiddenReactionCount}
+                </button>
+              )}
+            </div>
           )}
         </div>
 

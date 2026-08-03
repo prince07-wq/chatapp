@@ -30,7 +30,8 @@ function registerRoomHandlers(socket, io) {
         room,
         socket.id,
         socket.data.user.id,
-        socket.data.user.username
+        socket.data.user.username,
+        socket.data.user.profileImage,
       );
       const count = await presenceService.getMemberCount(room);
 
@@ -40,6 +41,7 @@ function registerRoomHandlers(socket, io) {
         socketId: socket.id,
         userId: socket.data.user.id,
         username: socket.data.user.username,
+        profileImage: socket.data.user.profileImage || "",
         count,
       });
 

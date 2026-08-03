@@ -22,7 +22,9 @@ import {
   clearSession,
   getRefreshToken,
   getStoredUser,
+  saveAccessToken,
   saveSession,
+  saveUser,
 } from "../utils/tokenStorage.js";
 
 const AuthContext = createContext(null);
@@ -134,6 +136,12 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  const updateAuthenticatedUser = useCallback(({ user: nextUser, accessToken }) => {
+    if (accessToken) saveAccessToken(accessToken);
+    saveUser(nextUser);
+    setUser(nextUser);
+  }, []);
+
   const value = useMemo(
     () => ({
       user,
@@ -141,9 +149,10 @@ export function AuthProvider({ children }) {
       isAuthenticated: Boolean(user),
       login,
       register,
+      updateAuthenticatedUser,
       logout,
     }),
-    [user, loading, login, register, logout]
+    [user, loading, login, register, updateAuthenticatedUser, logout]
   );
 
   return (

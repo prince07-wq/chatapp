@@ -6,6 +6,7 @@ const userSchema = new mongoose.Schema(
     username: { type: String, required: true, unique: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true },
+    profileImage: { type: String, default: "", trim: true },
   },
   { timestamps: true }
 );
@@ -20,7 +21,12 @@ userSchema.methods.comparePassword = function comparePassword(candidate) {
 };
 
 userSchema.methods.toSafeObject = function toSafeObject() {
-  return { id: this._id.toString(), username: this.username, email: this.email };
+  return {
+    id: this._id.toString(),
+    username: this.username,
+    email: this.email,
+    profileImage: this.profileImage || "",
+  };
 };
 
 module.exports = mongoose.model("User", userSchema);

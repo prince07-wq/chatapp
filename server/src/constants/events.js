@@ -16,6 +16,7 @@ module.exports = {
   TYPING_START: "typing_start",
   TYPING_STOP: "typing_stop",
   MARK_SEEN: "mark_seen",
+  TOGGLE_MESSAGE_REACTION: "toggle_message_reaction",
 
   // Server → Client
   ROOM_JOINED: "room_joined",
@@ -26,8 +27,12 @@ module.exports = {
   USER_LEFT: "user_left",
   ROOM_MEMBERS: "room_members",
   MESSAGE_STATUS_UPDATE: "message_status_update",
+  MESSAGE_EDITED: "message_edited",
+  MESSAGE_DELETED: "message_deleted",
+  MESSAGE_REACTIONS_UPDATED: "message_reactions_updated",
   USER_ONLINE: "user_online",
   USER_OFFLINE: "user_offline",
   FRIENDS_UPDATED: "friends_updated",
+  USER_PROFILE_UPDATED: "user_profile_updated",
   ERROR: "error",
 };

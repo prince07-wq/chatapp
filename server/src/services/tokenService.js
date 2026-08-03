@@ -3,7 +3,12 @@ const config = require("../config");
 
 function generateAccessToken(user) {
   return jwt.sign(
-    { id: user.id, username: user.username, email: user.email },
+    {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      profileImage: user.profileImage || "",
+    },
     config.JWT_SECRET,
     { expiresIn: config.JWT_EXPIRES_IN }
   );

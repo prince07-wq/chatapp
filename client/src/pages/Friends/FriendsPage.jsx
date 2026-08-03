@@ -13,6 +13,7 @@ import {
   searchUsers,
   sendFriendRequest,
 } from "../../api/userApi.js";
+import { resolveUploadedFileUrl } from "../../api/fileApi.js";
 
 const EMPTY_LISTS = { friends: [], incoming: [], outgoing: [] };
 const TABS = [
@@ -30,9 +31,11 @@ function presenceNameKey(username) {
   return normalized ? `name:${normalized}` : "";
 }
 
-function avatarFor(username) {
+function avatarFor(person) {
+  const username = person?.username;
   return {
     initials: initials(username),
+    imageSrc: resolveUploadedFileUrl(person?.profileImage),
     tone:
       "bg-[#E4ECF7] text-[#355A7A] dark:bg-[#2B3848] dark:text-[#C5DBEE]",
   };
@@ -153,7 +156,8 @@ export default function FriendsPage({
       recipientId: String(person.userId),
       name: person.username || "User",
       initials: initials(person.username),
-      tone: avatarFor(person.username).tone,
+      tone: avatarFor(person).tone,
+      imageSrc: resolveUploadedFileUrl(person.profileImage),
     };
   }
 
@@ -311,7 +315,7 @@ export default function FriendsPage({
                 return (
                   <UserListItem
                     key={person.userId}
-                    avatar={avatarFor(person.username)}
+                    avatar={avatarFor(person)}
                     name={person.username}
                     online={online}
                     onlineIndicatorClassName={

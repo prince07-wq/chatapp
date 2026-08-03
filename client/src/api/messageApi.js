@@ -85,3 +85,13 @@ export async function getLatestPrivateMessagePage(
     getPrivateMessagePage(recipientId, page, { signal }),
   );
 }
+
+export async function editMessage(messageId, message) {
+  const { data } = await api.patch(`/messages/${messageId}`, { message });
+  return data;
+}
+
+export async function deleteMessage(messageId) {
+  const { data } = await api.delete(`/messages/${messageId}`);
+  return data;
+}
