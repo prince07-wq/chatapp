@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import {
   Bell,
@@ -26,6 +26,7 @@ import MessageBubble from "../../components/Chat/MessageBubble.jsx";
 import MessageComposer from "../../components/Chat/MessageComposer.jsx";
 import NavigationItem from "../../components/Chat/NavigationItem.jsx";
 import UserListItem from "../../components/Chat/UserListItem.jsx";
+import FriendsPage from "../Friends/FriendsPage.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import {
   getLatestPrivateMessagePage,
@@ -411,6 +412,7 @@ function IconButton({ label, children, className = "", ...props }) {
 
 function NavigationRail({
   activeSection,
+  incomingFriendCount,
   profileInitials,
   loggingOut,
   onSectionChange,
@@ -434,7 +436,11 @@ function NavigationRail({
             icon={item.icon}
             label={item.label}
             active={item.section === activeSection}
-            badge={item.badge}
+            badge={
+              item.section === "friends"
+                ? incomingFriendCount || undefined
+                : item.badge
+            }
             onClick={
               item.section
                 ? () => onSectionChange(item.section)
@@ -623,6 +629,24 @@ function ConversationMessages({
   onScroll,
   loadingOlderMessages,
 }) {
+  function renderTypingIndicator() {
+    if (!isTyping) return null;
+
+    return (
+      <div
+        className="mt-2 flex justify-start"
+        role="status"
+        aria-label="Another user is typing"
+      >
+        <div className="typing-bubble relative flex h-9 w-[54px] items-center justify-center gap-1 rounded-[16px] rounded-bl-[6px] border border-black/[0.035] bg-[#E9E9EB] shadow-[0_2px_7px_rgba(20,22,26,0.025)] dark:border-white/[0.05] dark:bg-[#2C3036]">
+          <span className="typing-dot h-1.5 w-1.5 rounded-full bg-[#8E8E93] dark:bg-[#9A9EA6]" />
+          <span className="typing-dot h-1.5 w-1.5 rounded-full bg-[#8E8E93] dark:bg-[#9A9EA6]" />
+          <span className="typing-dot h-1.5 w-1.5 rounded-full bg-[#8E8E93] dark:bg-[#9A9EA6]" />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={scrollContainerRef}
@@ -644,37 +668,27 @@ function ConversationMessages({
         </div>
 
         <div className="mt-7 flex flex-1 flex-col justify-center pb-4">
-          {messages.map((message) => (
-            <MessageBubble
-              key={message.id}
-              messageId={message.id}
-              text={message.text}
-              attachment={message.attachment}
-              senderType={
-                message.direction === "outgoing" ? "sent" : "received"
-              }
-              timestamp={message.time}
-              deliveryStatus={
-                message.direction === "outgoing"
-                  ? message.status ?? (message.read ? "seen" : undefined)
-                  : undefined
-              }
-              breakBefore={message.breakBefore}
-            />
+          {messages.map((message, index) => (
+            <Fragment key={message.id}>
+              <MessageBubble
+                messageId={message.id}
+                text={message.text}
+                attachment={message.attachment}
+                senderType={
+                  message.direction === "outgoing" ? "sent" : "received"
+                }
+                timestamp={message.time}
+                deliveryStatus={
+                  message.direction === "outgoing"
+                    ? message.status ?? (message.read ? "seen" : undefined)
+                    : undefined
+                }
+                breakBefore={message.breakBefore}
+              />
+              {index === messages.length - 1 && renderTypingIndicator()}
+            </Fragment>
           ))}
-          {isTyping && (
-            <div
-              className="mt-2 flex justify-start"
-              role="status"
-              aria-label="Another user is typing"
-            >
-              <div className="typing-bubble relative flex h-9 w-[54px] items-center justify-center gap-1 rounded-[16px] rounded-bl-[6px] border border-black/[0.035] bg-[#E9E9EB] shadow-[0_2px_7px_rgba(20,22,26,0.025)] dark:border-white/[0.05] dark:bg-[#2C3036]">
-                <span className="typing-dot h-1.5 w-1.5 rounded-full bg-[#8E8E93] dark:bg-[#9A9EA6]" />
-                <span className="typing-dot h-1.5 w-1.5 rounded-full bg-[#8E8E93] dark:bg-[#9A9EA6]" />
-                <span className="typing-dot h-1.5 w-1.5 rounded-full bg-[#8E8E93] dark:bg-[#9A9EA6]" />
-              </div>
-            </div>
-          )}
+          {messages.length === 0 && renderTypingIndicator()}
           <div ref={messagesEndRef} />
         </div>
       </div>
@@ -779,6 +793,8 @@ export default function ChatPlaceholder() {
   const [activeRoomMembers, setActiveRoomMembers] = useState([]);
   const [loadingDmUsers, setLoadingDmUsers] = useState(true);
   const [dmUsersError, setDmUsersError] = useState("");
+  const [incomingFriendCount, setIncomingFriendCount] = useState(0);
+  const [friendsRefreshVersion, setFriendsRefreshVersion] = useState(0);
   const [chatMessages, setChatMessages] = useState(messages);
   const [roomSummaries, setRoomSummaries] = useState(() =>
     Object.fromEntries(
@@ -825,6 +841,7 @@ export default function ChatPlaceholder() {
   const initialScrollPendingRef = useRef(false);
   const prependScrollSnapshotRef = useRef(null);
   const shouldAutoScrollNewMessageRef = useRef(false);
+  const wasTypingRef = useRef(false);
   const seenEmissionIdsRef = useRef(new Set());
   const receivedSocketMessageIdsRef = useRef(new Set());
   const pendingActiveRoomSeenRef = useRef(INITIAL_ROOM);
@@ -1369,6 +1386,10 @@ export default function ChatPlaceholder() {
       });
     }
 
+    function handleFriendsUpdated() {
+      setFriendsRefreshVersion((version) => version + 1);
+    }
+
     socket.on("connect", handleConnect);
     socket.on("disconnect", handleDisconnect);
     socket.on("connect_error", handleConnectError);
@@ -1384,6 +1405,7 @@ export default function ChatPlaceholder() {
     socket.on("user_left", handleUserLeft);
     socket.on("user_online", handleUserOnline);
     socket.on("user_offline", handleUserOffline);
+    socket.on("friends_updated", handleFriendsUpdated);
 
     return () => {
       stopTyping();
@@ -1405,6 +1427,7 @@ export default function ChatPlaceholder() {
       socket.off("user_left", handleUserLeft);
       socket.off("user_online", handleUserOnline);
       socket.off("user_offline", handleUserOffline);
+      socket.off("friends_updated", handleFriendsUpdated);
       socket.disconnect();
       socketRef.current = null;
       joinedRoomRef.current = null;
@@ -1548,6 +1571,9 @@ export default function ChatPlaceholder() {
     const container = messagesScrollRef.current;
     if (!container) return;
 
+    const typingStarted = typingSocketIds.size > 0 && !wasTypingRef.current;
+    wasTypingRef.current = typingSocketIds.size > 0;
+
     if (initialScrollPendingRef.current) {
       initialScrollPendingRef.current = false;
       container.scrollTop = container.scrollHeight;
@@ -1563,11 +1589,14 @@ export default function ChatPlaceholder() {
       return;
     }
 
-    if (shouldAutoScrollNewMessageRef.current) {
+    if (
+      shouldAutoScrollNewMessageRef.current ||
+      (typingStarted && isNearBottomRef.current)
+    ) {
       shouldAutoScrollNewMessageRef.current = false;
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [chatMessages]);
+  }, [chatMessages, typingSocketIds]);
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -2126,7 +2155,11 @@ export default function ChatPlaceholder() {
       return nextIds;
     });
     setActiveSection("dms");
-    handleChatSelect({ ...chat, recipientId: normalizedRecipientId });
+    handleChatSelect({
+      ...chat,
+      room: chat.room ?? getDmRoomId(currentUserId, normalizedRecipientId),
+      recipientId: normalizedRecipientId,
+    });
   }
 
   function handleOpenProfile(chat) {
@@ -2256,49 +2289,61 @@ export default function ChatPlaceholder() {
       <div className="grid h-full grid-cols-[76px_minmax(0,1fr)] md:grid-cols-[76px_300px_minmax(0,1fr)] xl:grid-cols-[76px_390px_minmax(0,1fr)] 2xl:grid-cols-[76px_420px_minmax(0,1fr)]">
         <NavigationRail
           activeSection={activeSection}
+          incomingFriendCount={incomingFriendCount}
           profileInitials={profileInitials}
           loggingOut={loggingOut}
           onSectionChange={handleSectionChange}
           onLogout={handleLogout}
         />
-        <ChatList
-          title={listTitle}
-          chatItems={visibleChats}
-          emptyMessage={listEmptyMessage}
-          peopleMode={peopleMode}
-          activeRoom={activeRoom}
-          activeRoomOnline={activeChatOnline}
-          onlineUserKeys={onlineUserKeys}
-          roomSummaries={roomSummaries}
-          relativeTimeNow={relativeTimeNow}
-          onSelectChat={handleChatSelect}
-          onOpenProfile={handleOpenProfile}
-          onMessageUser={handleMessageUser}
-        />
-        <ConversationPanel
-          activeChat={activeChat}
-          activeChatOnline={activeChatOnline}
-          isTyping={typingSocketIds.size > 0}
-          messages={chatMessages}
-          messagesEndRef={messagesEndRef}
-          scrollContainerRef={messagesScrollRef}
-          onMessagesScroll={handleMessagesScroll}
-          loadingOlderMessages={loadingOlderMessages}
-          messageValue={messageValue}
-          onMessageChange={handleMessageChange}
-          onMessageSend={handleMessageSend}
-          selectedFile={selectedFile}
-          onFileSelect={handleFileSelect}
-          onFileRemove={handleFileRemove}
-          recordingState={recordingState}
-          recordingDuration={recordingDuration}
-          onStartRecording={handleStartVoiceRecording}
-          onStopRecording={handleStopVoiceRecording}
-          onCancelRecording={handleCancelVoiceRecording}
-          onShowMembers={handleShowMembers}
-          composerLoading={sendingMessage}
-          composerError={attachmentError}
-        />
+        {activeSection === "friends" ? (
+          <FriendsPage
+            onlineUserKeys={onlineUserKeys}
+            refreshVersion={friendsRefreshVersion}
+            onIncomingCountChange={setIncomingFriendCount}
+            onMessage={handleMessageUser}
+          />
+        ) : (
+          <>
+            <ChatList
+              title={listTitle}
+              chatItems={visibleChats}
+              emptyMessage={listEmptyMessage}
+              peopleMode={peopleMode}
+              activeRoom={activeRoom}
+              activeRoomOnline={activeChatOnline}
+              onlineUserKeys={onlineUserKeys}
+              roomSummaries={roomSummaries}
+              relativeTimeNow={relativeTimeNow}
+              onSelectChat={handleChatSelect}
+              onOpenProfile={handleOpenProfile}
+              onMessageUser={handleMessageUser}
+            />
+            <ConversationPanel
+              activeChat={activeChat}
+              activeChatOnline={activeChatOnline}
+              isTyping={typingSocketIds.size > 0}
+              messages={chatMessages}
+              messagesEndRef={messagesEndRef}
+              scrollContainerRef={messagesScrollRef}
+              onMessagesScroll={handleMessagesScroll}
+              loadingOlderMessages={loadingOlderMessages}
+              messageValue={messageValue}
+              onMessageChange={handleMessageChange}
+              onMessageSend={handleMessageSend}
+              selectedFile={selectedFile}
+              onFileSelect={handleFileSelect}
+              onFileRemove={handleFileRemove}
+              recordingState={recordingState}
+              recordingDuration={recordingDuration}
+              onStartRecording={handleStartVoiceRecording}
+              onStopRecording={handleStopVoiceRecording}
+              onCancelRecording={handleCancelVoiceRecording}
+              onShowMembers={handleShowMembers}
+              composerLoading={sendingMessage}
+              composerError={attachmentError}
+            />
+          </>
+        )}
       </div>
     </main>
   );

@@ -12,6 +12,7 @@ function Avatar({
   imageSrc,
   initials,
   online = false,
+  onlineIndicatorClassName,
   group = false,
   tone = "",
 }) {
@@ -50,7 +51,9 @@ function Avatar({
       </div>
 
       {online && (
-        <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-[3px] border-white bg-[#7D838C] dark:border-[#181A1F] dark:bg-[#A2A8B1]" />
+        <span
+          className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-[3px] border-white dark:border-[#181A1F] ${onlineIndicatorClassName ?? "bg-[#7D838C] dark:bg-[#A2A8B1]"}`}
+        />
       )}
     </div>
   );
