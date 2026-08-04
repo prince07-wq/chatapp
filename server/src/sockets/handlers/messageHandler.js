@@ -7,8 +7,8 @@ const {
 const emitError = require("../../utils/emitError");
 const messageService = require("../../services/messageService");
 const presenceService = require("../../services/presenceService");
-const { getPrivateRoomId } = require("../../utils/roomUtils");
 const { isReactionEmoji } = require("../../constants/reactions");
+const conversationService = require("../../services/conversationService");
 
 /**
  * Handles sending a message to a room.
@@ -29,6 +29,8 @@ function registerMessageHandlers(socket, io) {
       }
 
       const { room, message, attachment, replyToMessageId } = payload;
+
+      await conversationService.assertConversationAccess(socket.data.user.id, room);
 
       if (!socket.rooms.has(room)) {
         return emitError(socket, `You are not a member of room "${room}".`);
@@ -72,7 +74,11 @@ function registerMessageHandlers(socket, io) {
 
       const { recipientId, message, attachment, replyToMessageId } = payload;
       const senderId = socket.data.user.id;
-      const room = getPrivateRoomId(senderId, recipientId);
+      const conversation = await conversationService.ensurePrivateConversation(
+        senderId,
+        recipientId
+      );
+      const room = conversation.room;
 
       socket.join(room);
 
@@ -124,6 +130,7 @@ function registerMessageHandlers(socket, io) {
       }
 
       const { room, messageId, emoji, action = "set" } = payload;
+      await conversationService.assertConversationAccess(socket.data.user.id, room);
       if (!socket.rooms.has(room)) {
         return emitError(socket, `You are not a member of room "${room}".`);
       }

@@ -9,7 +9,7 @@ export function getRoomPreview(chat, roomSummary, now) {
   if (latestReaction && (Number.isNaN(latestMessageTime) || latestReactionTime > latestMessageTime)) {
     return { preview: `${latestReaction.emoji} Reacted to your message`, time: formatRelativeTime(latestReaction.createdAt, now) };
   }
-  if (!latestMessage) return { preview: chat.preview, time: chat.time };
+  if (!latestMessage) return { preview: "Start a conversation", time: "" };
 
   const relativeTime = formatRelativeTime(latestMessage.createdAt, now);
   if (latestMessage.direction === "outgoing") {

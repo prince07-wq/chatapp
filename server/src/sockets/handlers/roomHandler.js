@@ -3,6 +3,7 @@ const { isValidRoomPayload } = require("../../utils/socketValidators");
 const emitError = require("../../utils/emitError");
 const presenceService = require("../../services/presenceService");
 const messageService = require("../../services/messageService");
+const conversationService = require("../../services/conversationService");
 
 /**
  * Handles room join/leave for a single socket.
@@ -23,6 +24,7 @@ function registerRoomHandlers(socket, io) {
       }
 
       const { room } = payload;
+      await conversationService.assertConversationAccess(socket.data.user.id, room);
       socket.join(room);
       socket.data.currentRoom = room;
 
@@ -69,6 +71,10 @@ function registerRoomHandlers(socket, io) {
       }
 
       const { room } = payload;
+      if (!socket.rooms.has(room)) {
+        return emitError(socket, `You are not a member of room "${room}".`);
+      }
+
       socket.leave(room);
 
       await presenceService.removeMember(room, socket.id);

@@ -58,6 +58,7 @@ import {
   setConversationDeletion,
   setConversationMute,
   setConversationArchive,
+  searchChat as searchChatRequest,
 } from "../../api/userApi.js";
 import { getAccessToken } from "../../utils/tokenStorage.js";
 import {
@@ -407,10 +408,19 @@ function ChatList({
   onRequestDelete,
   onOpenProfile,
   onMessageUser,
+  onOpenSearchConversation,
+  onOpenSearchUser,
+  onOpenSearchMessage,
 }) {
   const [activeFilter, setActiveFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchLoadingMore, setSearchLoadingMore] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const [conversationMenu, setConversationMenu] = useState(null);
+  const searchControllerRef = useRef(null);
+  const searchRequestIdRef = useRef(0);
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
   const pinnedByRoom = new Map(
     pinnedConversations.map((conversation) => [
@@ -450,6 +460,83 @@ function ChatList({
       document.removeEventListener("keydown", closeMenu);
     };
   }, [conversationMenu]);
+
+  useEffect(() => {
+    const query = searchQuery.trim();
+    const requestId = ++searchRequestIdRef.current;
+    searchControllerRef.current?.abort();
+
+    if (!query) {
+      setSearchResults(null);
+      setSearchLoading(false);
+      setSearchLoadingMore(false);
+      setSearchError("");
+      return undefined;
+    }
+
+    setSearchResults(null);
+    setSearchError("");
+    setSearchLoading(true);
+    const timeoutId = window.setTimeout(async () => {
+      const controller = new AbortController();
+      searchControllerRef.current = controller;
+      try {
+        const results = await searchChatRequest(query, { signal: controller.signal });
+        if (requestId === searchRequestIdRef.current) {
+          setSearchResults(results);
+        }
+      } catch (error) {
+        if (error.code !== "ERR_CANCELED" && requestId === searchRequestIdRef.current) {
+          setSearchError(error.response?.data?.error ?? error.message ?? "Search failed.");
+        }
+      } finally {
+        if (requestId === searchRequestIdRef.current) setSearchLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      searchControllerRef.current?.abort();
+    };
+  }, [searchQuery]);
+
+  async function loadMoreMessageResults() {
+    const query = searchQuery.trim();
+    const nextPage = Number(searchResults?.messagePage?.page || 0) + 1;
+    if (!query || searchLoadingMore || !searchResults?.messagePage?.hasMore) return;
+
+    const requestId = ++searchRequestIdRef.current;
+    searchControllerRef.current?.abort();
+    const controller = new AbortController();
+    searchControllerRef.current = controller;
+    setSearchLoadingMore(true);
+    try {
+      const nextResults = await searchChatRequest(query, {
+        page: nextPage,
+        signal: controller.signal,
+      });
+      if (requestId === searchRequestIdRef.current) {
+        setSearchResults((current) => ({
+          ...nextResults,
+          messages: [
+            ...(current?.messages || []),
+            ...(nextResults.messages || []).filter(
+              (message) =>
+                !(current?.messages || []).some(
+                  (currentMessage) => String(currentMessage._id) === String(message._id),
+                ),
+            ),
+          ],
+        }));
+      }
+    } catch (error) {
+      if (error.code !== "ERR_CANCELED" && requestId === searchRequestIdRef.current) {
+        setSearchError(error.response?.data?.error ?? error.message ?? "Search failed.");
+      }
+    } finally {
+      if (requestId === searchRequestIdRef.current) setSearchLoadingMore(false);
+    }
+  }
 
   function openConversationMenu(chat, event) {
     event.preventDefault();
@@ -662,6 +749,107 @@ function ChatList({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-5 xl:px-4">
+        {normalizedSearchQuery ? (
+          <div className="py-2">
+            {searchLoading && (
+              <p className="px-3 py-4 text-center text-[13px] text-[#92969D] dark:text-[#777E88]">
+                Searching conversations...
+              </p>
+            )}
+            {searchError && (
+              <p className="px-3 py-4 text-center text-[13px] text-[#B65A5A]">
+                {searchError}
+              </p>
+            )}
+            {!searchLoading && !searchError && searchResults && (
+              <>
+                {[
+                  ["Rooms", searchResults.rooms, onOpenSearchConversation],
+                  ["Direct messages", searchResults.dms, onOpenSearchConversation],
+                  ["People", searchResults.users, onOpenSearchUser],
+                ].map(([label, results, onOpen]) =>
+                  results?.length ? (
+                    <section key={label} className="mb-3">
+                      <p className="px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-[#92969D] dark:text-[#777E88]">
+                        {label}
+                      </p>
+                      {results.map((result) => (
+                        <button
+                          key={`${label}-${result.room ?? result.userId}`}
+                          type="button"
+                          onClick={() => onOpen(result)}
+                          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-[#F4F4F2] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/30 dark:hover:bg-white/[0.06]"
+                        >
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#E4ECF7] text-[12px] font-semibold text-[#355A7A] dark:bg-[#2B3848] dark:text-[#C5DBEE]">
+                            {getUserInitials(result.name)}
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block truncate text-[14px] font-medium text-[#303238] dark:text-[#E8EAF0]">
+                              {result.type === "room"
+                                ? "Room"
+                                : result.name || result.username}
+                            </span>
+                            <span className="block truncate text-[12px] text-[#92969D] dark:text-[#777E88]">
+                              {result.relationshipStatus ||
+                                (result.type === "dm"
+                                  ? "Direct message"
+                                  : result.type === "room"
+                                    ? "Room"
+                                    : "User")}
+                            </span>
+                          </span>
+                        </button>
+                      ))}
+                    </section>
+                  ) : null,
+                )}
+                {searchResults.messages?.length > 0 && (
+                  <section className="mb-3">
+                    <p className="px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-[#92969D] dark:text-[#777E88]">
+                      Messages
+                    </p>
+                    {searchResults.messages.map((message) => (
+                      <button
+                        key={message._id}
+                        type="button"
+                        onClick={() => onOpenSearchMessage(message)}
+                        className="block w-full rounded-xl px-3 py-2.5 text-left hover:bg-[#F4F4F2] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/30 dark:hover:bg-white/[0.06]"
+                      >
+                        <span className="block truncate text-[13px] font-medium text-[#303238] dark:text-[#E8EAF0]">
+                          {message.conversation?.type === "dm"
+                            ? message.conversation.name
+                            : "Room"}
+                        </span>
+                        <span className="block truncate text-[12px] text-[#777C84] dark:text-[#AEB3BB]">
+                          {message.message || message.attachment?.fileName || "Attachment"}
+                        </span>
+                      </button>
+                    ))}
+                    {searchResults.messagePage?.hasMore && (
+                      <button
+                        type="button"
+                        onClick={loadMoreMessageResults}
+                        disabled={searchLoadingMore}
+                        className="mx-3 mt-1 rounded-lg px-2 py-1.5 text-[12px] font-medium text-[#3B82F6] hover:bg-[#F4F4F2] disabled:opacity-60 dark:hover:bg-white/[0.06]"
+                      >
+                        {searchLoadingMore ? "Loading..." : "Load more messages"}
+                      </button>
+                    )}
+                  </section>
+                )}
+                {!searchResults.rooms?.length &&
+                  !searchResults.dms?.length &&
+                  !searchResults.users?.length &&
+                  !searchResults.messages?.length && (
+                    <p className="px-3 py-8 text-center text-[13px] text-[#92969D] dark:text-[#777E88]">
+                      No results found.
+                    </p>
+                  )}
+              </>
+            )}
+          </div>
+        ) : (
+          <>
         {filteredChatItems.map((chat) => {
           if (peopleMode) {
             const online = onlineUserKeys.has(`id:${chat.recipientId}`);
@@ -715,7 +903,9 @@ function ChatList({
             />
           );
         })}
-        {conversationMenu && (
+          </>
+        )}
+        {!normalizedSearchQuery && conversationMenu && (
           <div
             role="menu"
             style={{
@@ -798,7 +988,7 @@ function ChatList({
             </button>
           </div>
         )}
-        {filteredChatItems.length === 0 && filteredEmptyMessage && (
+        {!normalizedSearchQuery && filteredChatItems.length === 0 && filteredEmptyMessage && (
           <p className="px-3 py-8 text-center text-[13px] text-[#92969D] dark:text-[#777E88]">
             {filteredEmptyMessage}
           </p>
@@ -822,6 +1012,7 @@ function ConversationMessages({
   onEditMessage,
   onDeleteMessageForMe,
   onDeleteMessageForEveryone,
+  highlightedMessageBackendId,
 }) {
   const [editEligibilityTime, setEditEligibilityTime] = useState(Date.now());
   const [highlightedMessageId, setHighlightedMessageId] = useState(null);
@@ -831,6 +1022,28 @@ function ConversationMessages({
     () => () => window.clearTimeout(highlightTimeoutRef.current),
     [],
   );
+
+  useEffect(() => {
+    if (!highlightedMessageBackendId) return;
+    const message = messages.find(
+      (candidate) =>
+        String(candidate.backendId) === String(highlightedMessageBackendId),
+    );
+    if (!message) return;
+
+    const element = Array.from(
+      scrollContainerRef.current?.querySelectorAll("[data-message-id]") || [],
+    ).find((candidate) => candidate.dataset.messageId === message.id);
+    if (!element) return;
+
+    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightedMessageId(message.id);
+    window.clearTimeout(highlightTimeoutRef.current);
+    highlightTimeoutRef.current = window.setTimeout(
+      () => setHighlightedMessageId(null),
+      1400,
+    );
+  }, [highlightedMessageBackendId, messages, scrollContainerRef]);
 
   useEffect(() => {
     const now = Date.now();
@@ -1004,6 +1217,7 @@ function ConversationPanel({
   onEditMessage,
   onDeleteMessageForMe,
   onDeleteMessageForEveryone,
+  highlightedMessageBackendId,
 }) {
   if (!activeChat) {
     return (
@@ -1061,6 +1275,7 @@ function ConversationPanel({
         onEditMessage={onEditMessage}
         onDeleteMessageForMe={onDeleteMessageForMe}
         onDeleteMessageForEveryone={onDeleteMessageForEveryone}
+        highlightedMessageBackendId={highlightedMessageBackendId}
       />
       <MessageComposer
         value={messageValue}
@@ -1092,6 +1307,8 @@ export default function ChatPlaceholder() {
   const [activeSection, setActiveSection] = useState("rooms");
   const [activeRoom, setActiveRoom] = useState(INITIAL_ROOM);
   const [activeDmRecipientId, setActiveDmRecipientId] = useState(null);
+  const [searchRoomChats, setSearchRoomChats] = useState([]);
+  const [searchMessageTarget, setSearchMessageTarget] = useState(null);
   const [availableDmUsers, setAvailableDmUsers] = useState([]);
   const [dmConversationUserIds, setDmConversationUserIds] = useState(
     () => new Set(),
@@ -1459,7 +1676,7 @@ export default function ChatPlaceholder() {
   const dmChats = userChats.filter((chat) =>
     dmConversationUserIds.has(chat.recipientId),
   );
-  const roomChats = chats.filter(
+  const roomChats = [...chats, ...searchRoomChats].filter(
     (chat) => !deletedConversationRooms.has(chat.room),
   );
   const visibleDmChats = dmChats.filter(
@@ -2361,13 +2578,25 @@ export default function ChatPlaceholder() {
 
     async function loadRoomHistory() {
       try {
-        const latestPage = activeDmRecipientId
-          ? await getLatestPrivateMessagePage(activeDmRecipientId, {
-              signal: controller.signal,
-            })
-          : await getLatestRoomMessagePage(activeRoom, {
-              signal: controller.signal,
-            });
+        const targetPage =
+          searchMessageTarget?.room === activeRoom
+            ? searchMessageTarget.historyPage
+            : null;
+        const latestPage = targetPage
+          ? activeDmRecipientId
+            ? await getPrivateMessagePage(activeDmRecipientId, targetPage, {
+                signal: controller.signal,
+              })
+            : await getRoomMessagePage(activeRoom, targetPage, {
+                signal: controller.signal,
+              })
+          : activeDmRecipientId
+            ? await getLatestPrivateMessagePage(activeDmRecipientId, {
+                signal: controller.signal,
+              })
+            : await getLatestRoomMessagePage(activeRoom, {
+                signal: controller.signal,
+              });
         if (generation !== historyGenerationRef.current) return;
 
         const history = latestPage.messages
@@ -2385,7 +2614,7 @@ export default function ChatPlaceholder() {
 
         oldestPageRef.current = latestPage.page;
         hasOlderMessagesRef.current = latestPage.page > 1;
-        initialScrollPendingRef.current = true;
+        initialScrollPendingRef.current = !targetPage;
 
         setChatMessages((currentMessages) => {
           const mergedMessages = [...history];
@@ -2434,7 +2663,7 @@ export default function ChatPlaceholder() {
     return () => {
       controller.abort();
     };
-  }, [activeDmRecipientId, activeRoom, currentUserId]);
+  }, [activeDmRecipientId, activeRoom, currentUserId, searchMessageTarget]);
 
   useEffect(() => {
     function handleVisibilityChange() {
@@ -3038,7 +3267,7 @@ export default function ChatPlaceholder() {
     [],
   );
 
-  function handleChatSelect(chat) {
+  function handleChatSelect(chat, { preserveSearchTarget = false } = {}) {
     const room = chat?.room;
     const recipientId = chat?.recipientId ?? null;
 
@@ -3050,6 +3279,8 @@ export default function ChatPlaceholder() {
     }
 
     if (!room || room === activeRoomRef.current) return;
+
+    if (!preserveSearchTarget) setSearchMessageTarget(null);
 
     stopTyping();
     setTypingSocketIds(new Set());
@@ -3297,7 +3528,7 @@ export default function ChatPlaceholder() {
     });
   }
 
-  function handleMessageUser(chat) {
+  function handleMessageUser(chat, { preserveSearchTarget = false } = {}) {
     const recipientId = chat?.recipientId;
     if (
       recipientId == null ||
@@ -3330,7 +3561,65 @@ export default function ChatPlaceholder() {
       ...chat,
       room,
       recipientId: normalizedRecipientId,
+    }, { preserveSearchTarget });
+  }
+
+  function createSearchRoomChat(result) {
+    const existingChat = chats.find((chat) => chat.room === result.room);
+    return {
+      id: `search-room-${result.room}`,
+      room: result.room,
+      name: existingChat?.name || "Room",
+      initials: getUserInitials(existingChat?.name || "Room"),
+      preview: "",
+      time: "",
+      group: true,
+      tone:
+        "bg-[#ECE8F3] text-[#65567B] dark:bg-[#373141] dark:text-[#D8CBE7]",
+    };
+  }
+
+  function handleOpenSearchConversation(result, options = {}) {
+    if (result?.type === "dm") {
+      const chat = {
+        recipientId: result.recipientId,
+        name: result.name,
+        imageSrc: resolveUploadedFileUrl(result.profileImage),
+        room: result.room,
+      };
+      handleMessageUser(chat, options);
+      return;
+    }
+
+    if (!result?.room) return;
+    const chat = createSearchRoomChat(result);
+    setSearchRoomChats((currentChats) =>
+      currentChats.some((currentChat) => currentChat.room === chat.room)
+        ? currentChats
+        : [...currentChats, chat],
+    );
+    setActiveSection("rooms");
+    handleChatSelect(chat, options);
+  }
+
+  function handleOpenSearchUser(result) {
+    handleMessageUser({
+      recipientId: result?.userId,
+      name: result?.username || "User",
+      imageSrc: resolveUploadedFileUrl(result?.profileImage),
     });
+  }
+
+  function handleOpenSearchMessage(message) {
+    const conversation = message?.conversation;
+    if (!conversation?.room || !message?._id || !message.historyPage) return;
+
+    setSearchMessageTarget({
+      room: conversation.room,
+      messageId: String(message._id),
+      historyPage: message.historyPage,
+    });
+    handleOpenSearchConversation(conversation, { preserveSearchTarget: true });
   }
 
   function handleOpenNotification(notification) {
@@ -3659,6 +3948,9 @@ export default function ChatPlaceholder() {
               onRequestDelete={handleRequestDeleteConversation}
               onOpenProfile={handleOpenProfile}
               onMessageUser={handleMessageUser}
+              onOpenSearchConversation={handleOpenSearchConversation}
+              onOpenSearchUser={handleOpenSearchUser}
+              onOpenSearchMessage={handleOpenSearchMessage}
             />
             <ConversationPanel
               activeChat={activeChat}
@@ -3696,6 +3988,7 @@ export default function ChatPlaceholder() {
               onEditMessage={handleStartEditingMessage}
               onDeleteMessageForMe={handleDeleteMessageForMe}
               onDeleteMessageForEveryone={handleDeleteMessageForEveryone}
+              highlightedMessageBackendId={searchMessageTarget?.messageId}
             />
           </>
         )}

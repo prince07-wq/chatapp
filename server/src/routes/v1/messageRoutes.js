@@ -5,7 +5,7 @@ const authenticate = require("../../middleware/authMiddleware");
 const router = express.Router();
 
 router.get("/private/:recipientId", authenticate, getPrivateMessages);
-router.get("/:room", getRoomMessages);
+router.get("/:room", authenticate, getRoomMessages);
 router.patch("/:id", authenticate, editMessage);
 router.delete("/:id", authenticate, deleteMessage);
 

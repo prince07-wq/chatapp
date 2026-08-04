@@ -1,8 +1,8 @@
 const messageService = require("../services/messageService");
 const AppError = require("../utils/AppError");
 const { parsePagination, isValidEditPayload } = require("../utils/httpValidators");
-const { getPrivateRoomId } = require("../utils/roomUtils");
 const EVENTS = require("../constants/events");
+const conversationService = require("../services/conversationService");
 
 async function getRoomMessages(req, res, next) {
   try {
@@ -12,6 +12,7 @@ async function getRoomMessages(req, res, next) {
       throw new AppError("Room is required.", 400);
     }
 
+    await conversationService.assertConversationAccess(req.user.id, room);
     const { page, limit } = parsePagination(req.query);
     const messages = await messageService.getRoomMessages(room, { page, limit });
 
@@ -61,7 +62,11 @@ async function getPrivateMessages(req, res, next) {
       throw new AppError("recipientId is required.", 400);
     }
 
-    const room = getPrivateRoomId(req.user.id, recipientId);
+    const conversation = await conversationService.ensurePrivateConversation(
+      req.user.id,
+      recipientId
+    );
+    const room = conversation.room;
     const { page, limit } = parsePagination(req.query);
     const messages = await messageService.getRoomMessages(room, { page, limit });
 

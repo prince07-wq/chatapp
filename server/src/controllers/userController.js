@@ -2,7 +2,9 @@ const presenceService = require("../services/presenceService");
 const friendService = require("../services/friendService");
 const userService = require("../services/userService");
 const tokenService = require("../services/tokenService");
+const searchService = require("../services/searchService");
 const EVENTS = require("../constants/events");
+const { parsePagination } = require("../utils/httpValidators");
 
 function emitFriendUpdate(req, userId, notification) {
   const io = req.app.get("io");
@@ -150,6 +152,19 @@ async function searchUsers(req, res, next) {
   }
 }
 
+async function searchChat(req, res, next) {
+  try {
+    const { page, limit } = parsePagination(req.query);
+    const results = await searchService.searchChat(req.user.id, req.query.q, {
+      page,
+      limit,
+    });
+    res.status(200).json(results);
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function sendFriendRequest(req, res, next) {
   try {
     const result = await friendService.sendFriendRequest(
@@ -241,6 +256,7 @@ module.exports = {
   setConversationArchive,
   getFriends,
   searchUsers,
+  searchChat,
   sendFriendRequest,
   respondToFriendRequest,
   cancelFriendRequest,

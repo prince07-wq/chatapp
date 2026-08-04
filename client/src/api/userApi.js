@@ -87,6 +87,14 @@ export async function searchUsers(username, { signal } = {}) {
   return Array.isArray(data?.users) ? data.users : [];
 }
 
+export async function searchChat(query, { page = 1, signal } = {}) {
+  const { data } = await api.get("/users/chat-search", {
+    params: { q: query, page, limit: 20 },
+    signal,
+  });
+  return data;
+}
+
 export async function sendFriendRequest(userId) {
   const { data } = await api.post("/users/friend-requests", { userId });
   return data;

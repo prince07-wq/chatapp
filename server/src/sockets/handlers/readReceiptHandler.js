@@ -2,6 +2,7 @@ const EVENTS = require("../../constants/events");
 const { isValidRoomPayload } = require("../../utils/socketValidators");
 const emitError = require("../../utils/emitError");
 const messageService = require("../../services/messageService");
+const conversationService = require("../../services/conversationService");
 
 /**
  * Handles marking a room's messages as "seen" when the client
@@ -16,6 +17,8 @@ function registerReadReceiptHandlers(socket, io) {
       }
 
       const { room } = payload;
+
+      await conversationService.assertConversationAccess(socket.data.user.id, room);
 
       if (!socket.rooms.has(room)) {
         return emitError(socket, `You are not a member of room "${room}".`);

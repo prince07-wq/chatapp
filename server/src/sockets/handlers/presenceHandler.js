@@ -2,6 +2,7 @@ const EVENTS = require("../../constants/events");
 const { isValidRoomPayload } = require("../../utils/socketValidators");
 const emitError = require("../../utils/emitError");
 const presenceService = require("../../services/presenceService");
+const conversationService = require("../../services/conversationService");
 
 /**
  * Handles presence-related requests and cleanup.
@@ -41,6 +42,7 @@ function registerPresenceHandlers(socket, io) {
       }
 
       const { room } = payload;
+      await conversationService.assertConversationAccess(socket.data.user.id, room);
       const members = await presenceService.getMembers(room);
 
       socket.emit(EVENTS.ROOM_MEMBERS, {

@@ -3,6 +3,8 @@ const User = require("../models/User");
 const AppError = require("../utils/AppError");
 const mongoose = require("mongoose");
 const { isReactionEmoji } = require("../constants/reactions");
+const conversationService = require("./conversationService");
+const fileService = require("./fileService");
 
 const MESSAGE_EDIT_WINDOW_MS = 15 * 60 * 1000;
 
@@ -15,6 +17,12 @@ async function createMessage({
   attachment = null,
   replyToMessageId = null,
 }) {
+  await conversationService.assertConversationAccess(senderId, room);
+
+  if (attachment?.fileUrl) {
+    await fileService.assertAttachmentOwnership(attachment.fileUrl, senderId);
+  }
+
   let replyTo;
 
   if (replyToMessageId) {
@@ -59,7 +67,7 @@ async function createMessage({
 
 async function getRoomMessages(room, { page, limit }) {
   const messages = await Message.find({ room })
-    .sort({ createdAt: 1 })
+    .sort({ createdAt: 1, _id: 1 })
     .skip((page - 1) * limit)
     .limit(limit);
 
@@ -136,6 +144,8 @@ async function editMessage(messageId, userId, newMessage) {
     throw new AppError("Message not found.", 404);
   }
 
+  await conversationService.assertConversationAccess(userId, existing.room);
+
   if (existing.senderId !== userId) {
     throw new AppError("Not authorized to edit this message.", 403);
   }
@@ -166,6 +176,8 @@ async function deleteMessage(messageId, userId) {
     throw new AppError("Message not found.", 404);
   }
 
+  await conversationService.assertConversationAccess(userId, existing.room);
+
   if (existing.senderId !== userId) {
     throw new AppError("Not authorized to delete this message.", 403);
   }
@@ -189,6 +201,8 @@ async function toggleMessageReaction({
   if (!mongoose.isValidObjectId(messageId)) {
     throw new AppError("Message not found.", 404);
   }
+
+  await conversationService.assertConversationAccess(userId, room);
 
   const existing = await Message.findOne({ _id: messageId, room });
   if (!existing) {
