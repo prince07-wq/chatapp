@@ -2,6 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import {
   Bell,
+  BellOff,
   EllipsisVertical,
   House,
   LogOut,
@@ -28,6 +29,7 @@ import MessageBubble from "../../components/Chat/MessageBubble.jsx";
 import MessageComposer from "../../components/Chat/MessageComposer.jsx";
 import ReactionDetailsModal from "../../components/Chat/ReactionDetailsModal.jsx";
 import DeleteConversationModal from "../../components/Chat/DeleteConversationModal.jsx";
+import MuteConversationModal from "../../components/Chat/MuteConversationModal.jsx";
 import NavigationItem from "../../components/Chat/NavigationItem.jsx";
 import UserListItem from "../../components/Chat/UserListItem.jsx";
 import FriendsPage from "../Friends/FriendsPage.jsx";
@@ -46,10 +48,12 @@ import {
 import {
   getConversationPins,
   getConversationDeletions,
+  getConversationMutes,
   getFriends,
   getOnlineUsers,
   setConversationPin,
   setConversationDeletion,
+  setConversationMute,
 } from "../../api/userApi.js";
 import { getAccessToken } from "../../utils/tokenStorage.js";
 import {
@@ -651,9 +655,11 @@ function ChatList({
   onlineUserKeys,
   roomSummaries = EMPTY_ROOM_SUMMARIES,
   pinnedConversations = [],
+  mutedConversations = [],
   relativeTimeNow,
   onSelectChat,
   onTogglePin,
+  onRequestMute,
   onRequestDelete,
   onOpenProfile,
   onMessageUser,
@@ -668,6 +674,22 @@ function ChatList({
       new Date(conversation.pinnedAt).getTime() || 0,
     ]),
   );
+  const mutedByRoom = new Map(
+    mutedConversations.map((conversation) => [
+      conversation.room,
+      conversation.mutedUntil
+        ? new Date(conversation.mutedUntil).getTime()
+        : null,
+    ]),
+  );
+
+  function isMuted(room) {
+    if (!mutedByRoom.has(room)) return false;
+    return isConversationMuted(
+      { mutedUntil: mutedByRoom.get(room) },
+      relativeTimeNow,
+    );
+  }
 
   useEffect(() => {
     if (!conversationMenu) return undefined;
@@ -695,7 +717,7 @@ function ChatList({
     }
 
     const menuWidth = 176;
-    const menuHeight = 96;
+    const menuHeight = 140;
     const viewportPadding = 8;
     const triggerRect = event.currentTarget.getBoundingClientRect();
     const requestedLeft =
@@ -927,6 +949,7 @@ function ChatList({
               online={online}
               read={chat.read}
               pinned={pinnedByRoom.has(chat.room)}
+              muted={isMuted(chat.room)}
               menuOpen={conversationMenu?.room === chat.room}
               onClick={() => onSelectChat(chat)}
               onMenuToggle={(event) => openConversationMenu(chat, event)}
@@ -957,6 +980,24 @@ function ChatList({
               {pinnedByRoom.has(conversationMenu.room)
                 ? "Unpin conversation"
                 : "Pin conversation"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(event) => {
+                event.stopPropagation();
+                const chat = chatItems.find(
+                  (candidate) => candidate.room === conversationMenu.room,
+                );
+                setConversationMenu(null);
+                if (chat) onRequestMute(chat);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-[#44484F] hover:bg-[#F4F4F2] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/30 dark:text-[#E1E3E7] dark:hover:bg-white/[0.07]"
+            >
+              <BellOff size={15} strokeWidth={1.9} />
+              {isMuted(conversationMenu.room)
+                ? "Unmute conversation"
+                : "Mute conversation"}
             </button>
             <button
               type="button"
@@ -1292,6 +1333,8 @@ export default function ChatPlaceholder() {
   );
   const [pinnedConversations, setPinnedConversations] = useState([]);
   const [deletedConversations, setDeletedConversations] = useState([]);
+  const [mutedConversations, setMutedConversations] = useState([]);
+  const [muteConfirmation, setMuteConfirmation] = useState(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState(null);
   const [deletingConversation, setDeletingConversation] = useState(false);
   const [deleteConversationError, setDeleteConversationError] = useState("");
@@ -1362,6 +1405,14 @@ export default function ChatPlaceholder() {
   const profileName = user?.username || user?.email || "You";
   const profileInitials = profileName.slice(0, 2).toUpperCase();
   const currentUserId = user?._id ?? user?.id;
+  const mutedConversationsByRoom = new Map(
+    mutedConversations.map((conversation) => [conversation.room, conversation]),
+  );
+  const isMutedConversation = (room) =>
+    isConversationMuted(
+      mutedConversationsByRoom.get(room),
+      relativeTimeNow,
+    );
   const deletedConversationRooms = new Set(
     deletedConversations.map((conversation) => conversation.room),
   );
@@ -1398,6 +1449,62 @@ export default function ChatPlaceholder() {
 
     return () => controller.abort();
   }, [currentUserId]);
+
+  useEffect(() => {
+    if (!currentUserId) return undefined;
+
+    const controller = new AbortController();
+    getConversationMutes({ signal: controller.signal })
+      .then((conversations) => {
+        if (!controller.signal.aborted) setMutedConversations(conversations);
+      })
+      .catch((error) => {
+        if (error.code !== "ERR_CANCELED") {
+          console.error(
+            "[conversation-mutes] load_error",
+            error.response?.data?.error ?? error.message,
+          );
+        }
+      });
+
+    return () => controller.abort();
+  }, [currentUserId]);
+
+  useEffect(() => {
+    const now = Date.now();
+    const nextExpiry = mutedConversations
+      .map((conversation) => new Date(conversation.mutedUntil).getTime())
+      .filter((mutedUntil) => Number.isFinite(mutedUntil) && mutedUntil > now)
+      .sort((first, second) => first - second)[0];
+    if (!nextExpiry) return undefined;
+
+    const timeout = setTimeout(() => {
+      const expiredRooms = mutedConversations
+        .filter(
+          (conversation) =>
+            conversation.mutedUntil &&
+            new Date(conversation.mutedUntil).getTime() <= Date.now(),
+        )
+        .map((conversation) => conversation.room);
+      if (expiredRooms.length === 0) return;
+
+      setMutedConversations((currentConversations) =>
+        currentConversations.filter(
+          (conversation) => !expiredRooms.includes(conversation.room),
+        ),
+      );
+      expiredRooms.forEach((room) => {
+        setConversationMute(room, false).catch((error) => {
+          console.error(
+            "[conversation-mutes] expiry_error",
+            error.response?.data?.error ?? error.message,
+          );
+        });
+      });
+    }, Math.max(0, nextExpiry - now) + 50);
+
+    return () => clearTimeout(timeout);
+  }, [mutedConversations]);
 
   useEffect(() => {
     if (!currentUserId) return undefined;
@@ -1606,6 +1713,7 @@ export default function ChatPlaceholder() {
       const latestMessage = summary.latestMessage;
       const chat = allChats.find((candidate) => candidate.room === room);
       if (!chat) return null;
+      if (isMutedConversation(room)) return null;
 
       const unreadCount = Math.max(1, Number(summary.unreadCount) || 0);
       const isPrivate = Boolean(chat.recipientId || latestMessage?.isPrivate);
@@ -3210,6 +3318,40 @@ export default function ChatPlaceholder() {
     }
   }
 
+  async function handleRequestMuteConversation(chat) {
+    if (!chat?.room) return;
+    if (!isMutedConversation(chat.room)) {
+      setMuteConfirmation(chat);
+      return;
+    }
+
+    try {
+      setMutedConversations(await setConversationMute(chat.room, false));
+    } catch (error) {
+      console.error(
+        "[conversation-mutes] update_error",
+        error.response?.data?.error ?? error.message,
+      );
+    }
+  }
+
+  async function handleMuteDuration(duration) {
+    const chat = muteConfirmation;
+    if (!chat?.room) return;
+
+    try {
+      setMutedConversations(
+        await setConversationMute(chat.room, true, duration),
+      );
+      setMuteConfirmation(null);
+    } catch (error) {
+      console.error(
+        "[conversation-mutes] update_error",
+        error.response?.data?.error ?? error.message,
+      );
+    }
+  }
+
   function restoreDeletedConversation(room) {
     if (!room || !deletedConversationRoomsRef.current.has(room)) return;
 
@@ -3688,9 +3830,11 @@ export default function ChatPlaceholder() {
               onlineUserKeys={onlineUserKeys}
               roomSummaries={roomSummaries}
               pinnedConversations={pinnedConversations}
+              mutedConversations={mutedConversations}
               relativeTimeNow={relativeTimeNow}
               onSelectChat={handleChatSelect}
               onTogglePin={handleToggleConversationPin}
+              onRequestMute={handleRequestMuteConversation}
               onRequestDelete={handleRequestDeleteConversation}
               onOpenProfile={handleOpenProfile}
               onMessageUser={handleMessageUser}
@@ -3756,6 +3900,13 @@ export default function ChatPlaceholder() {
             setDeleteConversationError("");
           }}
           onConfirm={handleConfirmDeleteConversation}
+        />
+      )}
+      {muteConfirmation && (
+        <MuteConversationModal
+          conversation={muteConfirmation}
+          onClose={() => setMuteConfirmation(null)}
+          onSelect={handleMuteDuration}
         />
       )}
     </main>

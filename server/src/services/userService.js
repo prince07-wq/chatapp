@@ -5,6 +5,13 @@ const mongoose = require("mongoose");
 const USERNAME_REGEX = /^[a-zA-Z0-9_.-]{2,32}$/;
 const MAX_PINNED_CONVERSATIONS = 100;
 const MAX_DELETED_CONVERSATIONS = 500;
+const MAX_MUTED_CONVERSATIONS = 500;
+const MUTE_DURATIONS = {
+  "1h": 60 * 60 * 1000,
+  "8h": 8 * 60 * 60 * 1000,
+  "1w": 7 * 24 * 60 * 60 * 1000,
+  forever: null,
+};
 
 function normalizeRoom(room) {
   const normalizedRoom = typeof room === "string" ? room.trim() : "";
@@ -141,6 +148,71 @@ async function setConversationDeletion(userId, room, deleted) {
   return serializeDeletedConversations(user.deletedConversations);
 }
 
+function removeExpiredMutes(user) {
+  const now = Date.now();
+  const activeMutes = user.mutedConversations.filter(
+    (conversation) =>
+      !conversation.mutedUntil || conversation.mutedUntil.getTime() > now,
+  );
+  const changed = activeMutes.length !== user.mutedConversations.length;
+  if (changed) user.mutedConversations = activeMutes;
+  return changed;
+}
+
+function serializeMutedConversations(mutedConversations = []) {
+  return mutedConversations.map(({ room, mutedUntil }) => ({
+    room,
+    mutedUntil,
+  }));
+}
+
+async function getConversationMutes(userId) {
+  const user = await User.findById(userId).select("mutedConversations");
+  if (!user) throw new AppError("User not found.", 404);
+  if (removeExpiredMutes(user)) await user.save();
+  return serializeMutedConversations(user.mutedConversations);
+}
+
+async function setConversationMute(userId, room, muted, duration) {
+  const normalizedRoom = normalizeRoom(room);
+  if (typeof muted !== "boolean") {
+    throw new AppError("'muted' must be a boolean.", 400);
+  }
+  if (muted && !Object.hasOwn(MUTE_DURATIONS, duration)) {
+    throw new AppError("'duration' must be 1h, 8h, 1w, or forever.", 400);
+  }
+
+  const user = await User.findById(userId);
+  if (!user) throw new AppError("User not found.", 404);
+  removeExpiredMutes(user);
+
+  const existingIndex = user.mutedConversations.findIndex(
+    (conversation) => conversation.room === normalizedRoom,
+  );
+
+  if (muted) {
+    if (existingIndex === -1 && user.mutedConversations.length >= MAX_MUTED_CONVERSATIONS) {
+      throw new AppError(
+        `You can mute up to ${MAX_MUTED_CONVERSATIONS} conversations.`,
+        400,
+      );
+    }
+    const mutedUntil = MUTE_DURATIONS[duration]
+      ? new Date(Date.now() + MUTE_DURATIONS[duration])
+      : null;
+    if (existingIndex === -1) {
+      user.mutedConversations.push({ room: normalizedRoom, mutedUntil });
+    } else {
+      user.mutedConversations[existingIndex].mutedUntil = mutedUntil;
+    }
+  } else if (existingIndex !== -1) {
+    user.mutedConversations.splice(existingIndex, 1);
+  }
+
+  await user.save();
+  return serializeMutedConversations(user.mutedConversations);
+}
+
 async function updateProfile(userId, { username, profileImage }) {
   const user = await User.findById(userId);
   if (!user) throw new AppError("User not found.", 404);
@@ -179,4 +251,6 @@ module.exports = {
   setConversationPin,
   getConversationDeletions,
   setConversationDeletion,
+  getConversationMutes,
+  setConversationMute,
 };

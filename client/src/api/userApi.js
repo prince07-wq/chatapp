@@ -39,6 +39,20 @@ export async function setConversationDeletion(room, deleted) {
     : [];
 }
 
+export async function getConversationMutes({ signal } = {}) {
+  const { data } = await api.get("/users/conversation-mutes", { signal });
+  return Array.isArray(data?.mutedConversations) ? data.mutedConversations : [];
+}
+
+export async function setConversationMute(room, muted, duration) {
+  const { data } = await api.patch("/users/conversation-mutes", {
+    room,
+    muted,
+    ...(muted ? { duration } : {}),
+  });
+  return Array.isArray(data?.mutedConversations) ? data.mutedConversations : [];
+}
+
 export async function getFriends({ signal } = {}) {
   const { data } = await api.get("/users/friends", { signal });
   return {

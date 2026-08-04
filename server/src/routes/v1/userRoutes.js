@@ -6,6 +6,8 @@ const {
   setConversationPin,
   getConversationDeletions,
   setConversationDeletion,
+  getConversationMutes,
+  setConversationMute,
   getFriends,
   searchUsers,
   sendFriendRequest,
@@ -23,6 +25,8 @@ router.get("/conversation-pins", authenticate, getConversationPins);
 router.patch("/conversation-pins", authenticate, setConversationPin);
 router.get("/conversation-deletions", authenticate, getConversationDeletions);
 router.patch("/conversation-deletions", authenticate, setConversationDeletion);
+router.get("/conversation-mutes", authenticate, getConversationMutes);
+router.patch("/conversation-mutes", authenticate, setConversationMute);
 router.get("/search", authenticate, searchUsers);
 router.get("/friends", authenticate, getFriends);
 router.post("/friend-requests", authenticate, sendFriendRequest);

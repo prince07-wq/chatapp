@@ -81,6 +81,31 @@ async function setConversationDeletion(req, res, next) {
   }
 }
 
+async function getConversationMutes(req, res, next) {
+  try {
+    const mutedConversations = await userService.getConversationMutes(
+      req.user.id,
+    );
+    res.status(200).json({ mutedConversations });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function setConversationMute(req, res, next) {
+  try {
+    const mutedConversations = await userService.setConversationMute(
+      req.user.id,
+      req.body?.room,
+      req.body?.muted,
+      req.body?.duration,
+    );
+    res.status(200).json({ mutedConversations });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function getFriends(req, res, next) {
   try {
     res.status(200).json(await friendService.getFriendLists(req.user.id));
@@ -186,6 +211,8 @@ module.exports = {
   setConversationPin,
   getConversationDeletions,
   setConversationDeletion,
+  getConversationMutes,
+  setConversationMute,
   getFriends,
   searchUsers,
   sendFriendRequest,

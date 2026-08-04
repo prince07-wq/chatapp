@@ -1,4 +1,4 @@
-import { CheckCheck, EllipsisVertical, Pin } from "lucide-react";
+import { BellOff, CheckCheck, EllipsisVertical, Pin } from "lucide-react";
 
 import Avatar from "./Avatar.jsx";
 
@@ -12,6 +12,7 @@ function ChatListItem({
   online = false,
   read = false,
   pinned = false,
+  muted = false,
   menuOpen = false,
   onClick,
   onMenuToggle,
@@ -54,6 +55,14 @@ function ChatListItem({
                   strokeWidth={2}
                   aria-label="Pinned conversation"
                   className="shrink-0 fill-[#7C828B] text-[#7C828B] dark:fill-[#A1A7B0] dark:text-[#A1A7B0]"
+                />
+              )}
+              {muted && (
+                <BellOff
+                  size={13}
+                  strokeWidth={2}
+                  aria-label="Muted conversation"
+                  className="shrink-0 text-[#7C828B] dark:text-[#A1A7B0]"
                 />
               )}
             </span>
