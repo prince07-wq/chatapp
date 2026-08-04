@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import {
+  Archive,
+  ArchiveRestore,
   Bell,
   BellOff,
   EllipsisVertical,
@@ -49,11 +51,13 @@ import {
   getConversationPins,
   getConversationDeletions,
   getConversationMutes,
+  getConversationArchives,
   getFriends,
   getOnlineUsers,
   setConversationPin,
   setConversationDeletion,
   setConversationMute,
+  setConversationArchive,
 } from "../../api/userApi.js";
 import { getAccessToken } from "../../utils/tokenStorage.js";
 import {
@@ -394,10 +398,12 @@ function ChatList({
   roomSummaries = EMPTY_ROOM_SUMMARIES,
   pinnedConversations = [],
   mutedConversations = [],
+  archivedConversations = [],
   relativeTimeNow,
   onSelectChat,
   onTogglePin,
   onRequestMute,
+  onToggleArchive,
   onRequestDelete,
   onOpenProfile,
   onMessageUser,
@@ -455,7 +461,7 @@ function ChatList({
     }
 
     const menuWidth = 176;
-    const menuHeight = 140;
+    const menuHeight = 184;
     const viewportPadding = 8;
     const triggerRect = event.currentTarget.getBoundingClientRect();
     const requestedLeft =
@@ -489,16 +495,23 @@ function ChatList({
     (chat) => Number(getChatSummary(chat).unreadCount) > 0,
   ).length;
   const groupConversationCount = chatItems.filter((chat) => chat.group).length;
+  const archivedByRoom = new Set(
+    archivedConversations.map((conversation) => conversation.room),
+  );
   const originalChatIndexes = new Map(
     chatItems.map((chat, index) => [chat.room, index]),
   );
   const filteredChatItems = chatItems
     .filter((chat) => {
       const roomSummary = getChatSummary(chat);
+      const archived = archivedByRoom.has(chat.room);
       const matchesFilter =
-        activeFilter === "all" ||
+        (activeFilter === "archived" && archived) ||
+        (activeFilter === "all" && !archived) ||
         (activeFilter === "unread" && Number(roomSummary.unreadCount) > 0) ||
         (activeFilter === "groups" && chat.group);
+
+      if (activeFilter !== "archived" && archived) return false;
 
       if (!matchesFilter) return false;
       if (!normalizedSearchQuery) return true;
@@ -604,6 +617,14 @@ function ChatList({
             className={`h-9 rounded-xl px-4 text-[13px] font-medium transition-colors duration-200 focus:outline-none focus-visible:ring-2 ${activeFilter === "all" ? activeChipColors : inactiveChipColors}`}
           >
             All
+          </button>
+          <button
+            type="button"
+            aria-pressed={activeFilter === "archived"}
+            onClick={() => setActiveFilter("archived")}
+            className={`h-9 rounded-xl px-3.5 text-[13px] font-medium transition-colors duration-200 focus:outline-none focus-visible:ring-2 ${activeFilter === "archived" ? activeChipColors : inactiveChipColors}`}
+          >
+            Archived
           </button>
           <button
             type="button"
@@ -736,6 +757,28 @@ function ChatList({
               {isMuted(conversationMenu.room)
                 ? "Unmute conversation"
                 : "Mute conversation"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(event) => {
+                event.stopPropagation();
+                const chat = chatItems.find(
+                  (candidate) => candidate.room === conversationMenu.room,
+                );
+                setConversationMenu(null);
+                if (chat) onToggleArchive(chat);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-[#44484F] hover:bg-[#F4F4F2] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/30 dark:text-[#E1E3E7] dark:hover:bg-white/[0.07]"
+            >
+              {archivedByRoom.has(conversationMenu.room) ? (
+                <ArchiveRestore size={15} strokeWidth={1.9} />
+              ) : (
+                <Archive size={15} strokeWidth={1.9} />
+              )}
+              {archivedByRoom.has(conversationMenu.room)
+                ? "Unarchive conversation"
+                : "Archive conversation"}
             </button>
             <button
               type="button"
@@ -1072,6 +1115,7 @@ export default function ChatPlaceholder() {
   const [pinnedConversations, setPinnedConversations] = useState([]);
   const [deletedConversations, setDeletedConversations] = useState([]);
   const [mutedConversations, setMutedConversations] = useState([]);
+  const [archivedConversations, setArchivedConversations] = useState([]);
   const [muteConfirmation, setMuteConfirmation] = useState(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState(null);
   const [deletingConversation, setDeletingConversation] = useState(false);
@@ -1180,6 +1224,26 @@ export default function ChatPlaceholder() {
         if (error.code !== "ERR_CANCELED") {
           console.error(
             "[conversation-pins] load_error",
+            error.response?.data?.error ?? error.message,
+          );
+        }
+      });
+
+    return () => controller.abort();
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!currentUserId) return undefined;
+
+    const controller = new AbortController();
+    getConversationArchives({ signal: controller.signal })
+      .then((conversations) => {
+        if (!controller.signal.aborted) setArchivedConversations(conversations);
+      })
+      .catch((error) => {
+        if (error.code !== "ERR_CANCELED") {
+          console.error(
+            "[conversation-archives] load_error",
             error.response?.data?.error ?? error.message,
           );
         }
@@ -3090,6 +3154,23 @@ export default function ChatPlaceholder() {
     }
   }
 
+  async function handleToggleConversationArchive(chat) {
+    if (!chat?.room) return;
+    const archived = archivedConversations.some(
+      (conversation) => conversation.room === chat.room,
+    );
+    try {
+      setArchivedConversations(
+        await setConversationArchive(chat.room, !archived),
+      );
+    } catch (error) {
+      console.error(
+        "[conversation-archives] update_error",
+        error.response?.data?.error ?? error.message,
+      );
+    }
+  }
+
   function restoreDeletedConversation(room) {
     if (!room || !deletedConversationRoomsRef.current.has(room)) return;
 
@@ -3569,10 +3650,12 @@ export default function ChatPlaceholder() {
               roomSummaries={roomSummaries}
               pinnedConversations={pinnedConversations}
               mutedConversations={mutedConversations}
+              archivedConversations={archivedConversations}
               relativeTimeNow={relativeTimeNow}
               onSelectChat={handleChatSelect}
               onTogglePin={handleToggleConversationPin}
               onRequestMute={handleRequestMuteConversation}
+              onToggleArchive={handleToggleConversationArchive}
               onRequestDelete={handleRequestDeleteConversation}
               onOpenProfile={handleOpenProfile}
               onMessageUser={handleMessageUser}

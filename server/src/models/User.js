@@ -25,6 +25,14 @@ const mutedConversationSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const archivedConversationSchema = new mongoose.Schema(
+  {
+    room: { type: String, required: true, trim: true },
+    archivedAt: { type: Date, required: true, default: Date.now },
+  },
+  { _id: false },
+);
+
 const userSchema = new mongoose.Schema(
   {
     username: { type: String, required: true, unique: true, trim: true },
@@ -34,6 +42,7 @@ const userSchema = new mongoose.Schema(
     pinnedConversations: { type: [pinnedConversationSchema], default: [] },
     deletedConversations: { type: [deletedConversationSchema], default: [] },
     mutedConversations: { type: [mutedConversationSchema], default: [] },
+    archivedConversations: { type: [archivedConversationSchema], default: [] },
   },
   { timestamps: true }
 );

@@ -53,6 +53,23 @@ export async function setConversationMute(room, muted, duration) {
   return Array.isArray(data?.mutedConversations) ? data.mutedConversations : [];
 }
 
+export async function getConversationArchives({ signal } = {}) {
+  const { data } = await api.get("/users/conversation-archives", { signal });
+  return Array.isArray(data?.archivedConversations)
+    ? data.archivedConversations
+    : [];
+}
+
+export async function setConversationArchive(room, archived) {
+  const { data } = await api.patch("/users/conversation-archives", {
+    room,
+    archived,
+  });
+  return Array.isArray(data?.archivedConversations)
+    ? data.archivedConversations
+    : [];
+}
+
 export async function getFriends({ signal } = {}) {
   const { data } = await api.get("/users/friends", { signal });
   return {

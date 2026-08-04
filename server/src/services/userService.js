@@ -6,6 +6,7 @@ const USERNAME_REGEX = /^[a-zA-Z0-9_.-]{2,32}$/;
 const MAX_PINNED_CONVERSATIONS = 100;
 const MAX_DELETED_CONVERSATIONS = 500;
 const MAX_MUTED_CONVERSATIONS = 500;
+const MAX_ARCHIVED_CONVERSATIONS = 500;
 const MUTE_DURATIONS = {
   "1h": 60 * 60 * 1000,
   "8h": 8 * 60 * 60 * 1000,
@@ -213,6 +214,43 @@ async function setConversationMute(userId, room, muted, duration) {
   return serializeMutedConversations(user.mutedConversations);
 }
 
+function serializeArchivedConversations(archivedConversations = []) {
+  return archivedConversations
+    .map(({ room, archivedAt }) => ({ room, archivedAt }))
+    .sort((first, second) => second.archivedAt - first.archivedAt);
+}
+
+async function getConversationArchives(userId) {
+  const user = await User.findById(userId).select("archivedConversations");
+  if (!user) throw new AppError("User not found.", 404);
+  return serializeArchivedConversations(user.archivedConversations);
+}
+
+async function setConversationArchive(userId, room, archived) {
+  const normalizedRoom = normalizeRoom(room);
+  if (typeof archived !== "boolean") {
+    throw new AppError("'archived' must be a boolean.", 400);
+  }
+  const user = await User.findById(userId);
+  if (!user) throw new AppError("User not found.", 404);
+  const existingIndex = user.archivedConversations.findIndex(
+    (conversation) => conversation.room === normalizedRoom,
+  );
+  if (archived && existingIndex === -1) {
+    if (user.archivedConversations.length >= MAX_ARCHIVED_CONVERSATIONS) {
+      throw new AppError(
+        `You can archive up to ${MAX_ARCHIVED_CONVERSATIONS} conversations.`,
+        400,
+      );
+    }
+    user.archivedConversations.push({ room: normalizedRoom, archivedAt: new Date() });
+  } else if (!archived && existingIndex !== -1) {
+    user.archivedConversations.splice(existingIndex, 1);
+  }
+  await user.save();
+  return serializeArchivedConversations(user.archivedConversations);
+}
+
 async function updateProfile(userId, { username, profileImage }) {
   const user = await User.findById(userId);
   if (!user) throw new AppError("User not found.", 404);
@@ -253,4 +291,6 @@ module.exports = {
   setConversationDeletion,
   getConversationMutes,
   setConversationMute,
+  getConversationArchives,
+  setConversationArchive,
 };

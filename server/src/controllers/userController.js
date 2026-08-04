@@ -106,6 +106,30 @@ async function setConversationMute(req, res, next) {
   }
 }
 
+async function getConversationArchives(req, res, next) {
+  try {
+    const archivedConversations = await userService.getConversationArchives(
+      req.user.id,
+    );
+    res.status(200).json({ archivedConversations });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function setConversationArchive(req, res, next) {
+  try {
+    const archivedConversations = await userService.setConversationArchive(
+      req.user.id,
+      req.body?.room,
+      req.body?.archived,
+    );
+    res.status(200).json({ archivedConversations });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function getFriends(req, res, next) {
   try {
     res.status(200).json(await friendService.getFriendLists(req.user.id));
@@ -213,6 +237,8 @@ module.exports = {
   setConversationDeletion,
   getConversationMutes,
   setConversationMute,
+  getConversationArchives,
+  setConversationArchive,
   getFriends,
   searchUsers,
   sendFriendRequest,
