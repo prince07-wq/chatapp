@@ -5,6 +5,40 @@ export async function getOnlineUsers({ signal } = {}) {
   return Array.isArray(data?.users) ? data.users : [];
 }
 
+export async function getConversationPins({ signal } = {}) {
+  const { data } = await api.get("/users/conversation-pins", { signal });
+  return Array.isArray(data?.pinnedConversations)
+    ? data.pinnedConversations
+    : [];
+}
+
+export async function setConversationPin(room, pinned) {
+  const { data } = await api.patch("/users/conversation-pins", {
+    room,
+    pinned,
+  });
+  return Array.isArray(data?.pinnedConversations)
+    ? data.pinnedConversations
+    : [];
+}
+
+export async function getConversationDeletions({ signal } = {}) {
+  const { data } = await api.get("/users/conversation-deletions", { signal });
+  return Array.isArray(data?.deletedConversations)
+    ? data.deletedConversations
+    : [];
+}
+
+export async function setConversationDeletion(room, deleted) {
+  const { data } = await api.patch("/users/conversation-deletions", {
+    room,
+    deleted,
+  });
+  return Array.isArray(data?.deletedConversations)
+    ? data.deletedConversations
+    : [];
+}
+
 export async function getFriends({ signal } = {}) {
   const { data } = await api.get("/users/friends", { signal });
   return {

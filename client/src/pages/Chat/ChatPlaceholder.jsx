@@ -8,11 +8,13 @@ import {
   MessageCircle,
   MessageSquare,
   PenLine,
+  Pin,
   Phone,
   Plus,
   Search,
   Settings,
   SlidersHorizontal,
+  Trash2,
   User,
   UserPlus,
   Video,
@@ -25,6 +27,7 @@ import ConversationHeader from "../../components/Chat/ConversationHeader.jsx";
 import MessageBubble from "../../components/Chat/MessageBubble.jsx";
 import MessageComposer from "../../components/Chat/MessageComposer.jsx";
 import ReactionDetailsModal from "../../components/Chat/ReactionDetailsModal.jsx";
+import DeleteConversationModal from "../../components/Chat/DeleteConversationModal.jsx";
 import NavigationItem from "../../components/Chat/NavigationItem.jsx";
 import UserListItem from "../../components/Chat/UserListItem.jsx";
 import FriendsPage from "../Friends/FriendsPage.jsx";
@@ -40,7 +43,14 @@ import {
   editMessage as editMessageRequest,
   deleteMessage as deleteMessageRequest,
 } from "../../api/messageApi.js";
-import { getFriends, getOnlineUsers } from "../../api/userApi.js";
+import {
+  getConversationPins,
+  getConversationDeletions,
+  getFriends,
+  getOnlineUsers,
+  setConversationPin,
+  setConversationDeletion,
+} from "../../api/userApi.js";
 import { getAccessToken } from "../../utils/tokenStorage.js";
 import {
   loadNotificationPreferences,
@@ -525,6 +535,20 @@ function getRoomPreview(chat, roomSummary, now) {
   };
 }
 
+function getConversationActivityTime(roomSummary) {
+  const messageTime = new Date(
+    roomSummary?.latestMessage?.createdAt || 0,
+  ).getTime();
+  const reactionTime = new Date(
+    roomSummary?.latestReaction?.createdAt || 0,
+  ).getTime();
+
+  return Math.max(
+    Number.isNaN(messageTime) ? 0 : messageTime,
+    Number.isNaN(reactionTime) ? 0 : reactionTime,
+  );
+}
+
 function presenceNameKey(username) {
   return username ? `name:${username.trim().toLowerCase()}` : null;
 }
@@ -626,14 +650,73 @@ function ChatList({
   activeRoomOnline,
   onlineUserKeys,
   roomSummaries = EMPTY_ROOM_SUMMARIES,
+  pinnedConversations = [],
   relativeTimeNow,
   onSelectChat,
+  onTogglePin,
+  onRequestDelete,
   onOpenProfile,
   onMessageUser,
 }) {
   const [activeFilter, setActiveFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [conversationMenu, setConversationMenu] = useState(null);
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const pinnedByRoom = new Map(
+    pinnedConversations.map((conversation) => [
+      conversation.room,
+      new Date(conversation.pinnedAt).getTime() || 0,
+    ]),
+  );
+
+  useEffect(() => {
+    if (!conversationMenu) return undefined;
+
+    function closeMenu(event) {
+      if (event.type === "keydown" && event.key !== "Escape") return;
+      setConversationMenu(null);
+    }
+
+    document.addEventListener("click", closeMenu);
+    document.addEventListener("keydown", closeMenu);
+    return () => {
+      document.removeEventListener("click", closeMenu);
+      document.removeEventListener("keydown", closeMenu);
+    };
+  }, [conversationMenu]);
+
+  function openConversationMenu(chat, event) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (event.type === "click" && conversationMenu?.room === chat.room) {
+      setConversationMenu(null);
+      return;
+    }
+
+    const menuWidth = 176;
+    const menuHeight = 96;
+    const viewportPadding = 8;
+    const triggerRect = event.currentTarget.getBoundingClientRect();
+    const requestedLeft =
+      event.type === "contextmenu"
+        ? event.clientX
+        : triggerRect.right - menuWidth;
+    const requestedTop =
+      event.type === "contextmenu" ? event.clientY : triggerRect.bottom + 4;
+
+    setConversationMenu({
+      room: chat.room,
+      left: Math.max(
+        viewportPadding,
+        Math.min(requestedLeft, window.innerWidth - menuWidth - viewportPadding),
+      ),
+      top:
+        requestedTop + menuHeight > window.innerHeight - viewportPadding
+          ? Math.max(viewportPadding, requestedTop - menuHeight - 8)
+          : requestedTop,
+    });
+  }
 
   function getChatSummary(chat) {
     return roomSummaries?.[chat.room] ?? {
@@ -646,21 +729,53 @@ function ChatList({
     (chat) => Number(getChatSummary(chat).unreadCount) > 0,
   ).length;
   const groupConversationCount = chatItems.filter((chat) => chat.group).length;
-  const filteredChatItems = chatItems.filter((chat) => {
-    const roomSummary = getChatSummary(chat);
-    const matchesFilter =
-      activeFilter === "all" ||
-      (activeFilter === "unread" && Number(roomSummary.unreadCount) > 0) ||
-      (activeFilter === "groups" && chat.group);
+  const originalChatIndexes = new Map(
+    chatItems.map((chat, index) => [chat.room, index]),
+  );
+  const filteredChatItems = chatItems
+    .filter((chat) => {
+      const roomSummary = getChatSummary(chat);
+      const matchesFilter =
+        activeFilter === "all" ||
+        (activeFilter === "unread" && Number(roomSummary.unreadCount) > 0) ||
+        (activeFilter === "groups" && chat.group);
 
-    if (!matchesFilter) return false;
-    if (!normalizedSearchQuery) return true;
+      if (!matchesFilter) return false;
+      if (!normalizedSearchQuery) return true;
 
-    const { preview } = getRoomPreview(chat, roomSummary, relativeTimeNow);
-    return `${chat.name} ${preview}`
-      .toLowerCase()
-      .includes(normalizedSearchQuery);
-  });
+      const { preview } = getRoomPreview(chat, roomSummary, relativeTimeNow);
+      return `${chat.name} ${preview}`
+        .toLowerCase()
+        .includes(normalizedSearchQuery);
+    })
+    .sort((first, second) => {
+      if (peopleMode) {
+        return (
+          (originalChatIndexes.get(first.room) ?? 0) -
+          (originalChatIndexes.get(second.room) ?? 0)
+        );
+      }
+
+      const firstPinnedAt = pinnedByRoom.get(first.room);
+      const secondPinnedAt = pinnedByRoom.get(second.room);
+      const firstPinned = firstPinnedAt !== undefined;
+      const secondPinned = secondPinnedAt !== undefined;
+
+      if (firstPinned !== secondPinned) return firstPinned ? -1 : 1;
+      if (firstPinned && secondPinned && firstPinnedAt !== secondPinnedAt) {
+        return secondPinnedAt - firstPinnedAt;
+      }
+
+      const activityDifference =
+        getConversationActivityTime(getChatSummary(second)) -
+        getConversationActivityTime(getChatSummary(first));
+      if (activityDifference !== 0 && !firstPinned) return activityDifference;
+
+      return (
+        (originalChatIndexes.get(first.room) ?? 0) -
+        (originalChatIndexes.get(second.room) ?? 0)
+      );
+    });
   const filteredEmptyMessage =
     activeFilter === "unread"
       ? "You're all caught up."
@@ -811,10 +926,56 @@ function ChatList({
               active={chat.room === activeRoom}
               online={online}
               read={chat.read}
+              pinned={pinnedByRoom.has(chat.room)}
+              menuOpen={conversationMenu?.room === chat.room}
               onClick={() => onSelectChat(chat)}
+              onMenuToggle={(event) => openConversationMenu(chat, event)}
             />
           );
         })}
+        {conversationMenu && (
+          <div
+            role="menu"
+            style={{
+              left: conversationMenu.left,
+              top: conversationMenu.top,
+            }}
+            className="fixed z-50 min-w-44 rounded-xl border border-[#E5E6E3] bg-white p-1.5 shadow-lg dark:border-white/[0.09] dark:bg-[#24272E]"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(event) => {
+                event.stopPropagation();
+                const room = conversationMenu.room;
+                setConversationMenu(null);
+                onTogglePin(room);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-[#44484F] hover:bg-[#F4F4F2] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/30 dark:text-[#E1E3E7] dark:hover:bg-white/[0.07]"
+            >
+              <Pin size={15} strokeWidth={1.9} />
+              {pinnedByRoom.has(conversationMenu.room)
+                ? "Unpin conversation"
+                : "Pin conversation"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(event) => {
+                event.stopPropagation();
+                const chat = chatItems.find(
+                  (candidate) => candidate.room === conversationMenu.room,
+                );
+                setConversationMenu(null);
+                if (chat) onRequestDelete(chat);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium text-[#B65A5A] hover:bg-[#FBF3F3] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#D56B6B]/30 dark:text-[#E39A9A] dark:hover:bg-[#302526]"
+            >
+              <Trash2 size={15} strokeWidth={1.9} />
+              Delete conversation
+            </button>
+          </div>
+        )}
         {filteredChatItems.length === 0 && filteredEmptyMessage && (
           <p className="px-3 py-8 text-center text-[13px] text-[#92969D] dark:text-[#777E88]">
             {filteredEmptyMessage}
@@ -1022,6 +1183,16 @@ function ConversationPanel({
   onDeleteMessageForMe,
   onDeleteMessageForEveryone,
 }) {
+  if (!activeChat) {
+    return (
+      <section className="relative col-start-2 flex min-h-0 min-w-0 flex-1 items-center justify-center bg-[#F7F7F5] dark:bg-[#111315] md:col-start-auto">
+        <p className="text-[14px] text-[#858A92] dark:text-[#9198A2]">
+          Select a conversation to start chatting.
+        </p>
+      </section>
+    );
+  }
+
   return (
     <section className="relative col-start-2 flex min-h-0 min-w-0 flex-col bg-[#F7F7F5] dark:bg-[#111315] md:col-start-auto">
       <ConversationHeader
@@ -1119,6 +1290,11 @@ export default function ChatPlaceholder() {
   const [notificationPreferences, setNotificationPreferences] = useState(
     loadNotificationPreferences,
   );
+  const [pinnedConversations, setPinnedConversations] = useState([]);
+  const [deletedConversations, setDeletedConversations] = useState([]);
+  const [deleteConfirmation, setDeleteConfirmation] = useState(null);
+  const [deletingConversation, setDeletingConversation] = useState(false);
+  const [deleteConversationError, setDeleteConversationError] = useState("");
   const [chatMessages, setChatMessages] = useState(messages);
   const [roomSummaries, setRoomSummaries] = useState(() =>
     Object.fromEntries(
@@ -1181,16 +1357,176 @@ export default function ChatPlaceholder() {
   const recordingSessionRef = useRef(0);
   const voiceSendPendingRef = useRef(false);
   const hiddenMessageIdsRef = useRef(new Set());
+  const deletedConversationRoomsRef = useRef(new Set());
 
   const profileName = user?.username || user?.email || "You";
   const profileInitials = profileName.slice(0, 2).toUpperCase();
   const currentUserId = user?._id ?? user?.id;
+  const deletedConversationRooms = new Set(
+    deletedConversations.map((conversation) => conversation.room),
+  );
   const reactionDetailsMessage = chatMessages.find(
     (message) => message.id === reactionDetailsMessageId,
   );
 
   useEffect(() => {
     hiddenMessageIdsRef.current = loadHiddenMessageIds(currentUserId);
+  }, [currentUserId]);
+
+  useEffect(() => {
+    deletedConversationRoomsRef.current = new Set(
+      deletedConversations.map((conversation) => conversation.room),
+    );
+  }, [deletedConversations]);
+
+  useEffect(() => {
+    if (!currentUserId) return undefined;
+
+    const controller = new AbortController();
+    getConversationPins({ signal: controller.signal })
+      .then((pins) => {
+        if (!controller.signal.aborted) setPinnedConversations(pins);
+      })
+      .catch((error) => {
+        if (error.code !== "ERR_CANCELED") {
+          console.error(
+            "[conversation-pins] load_error",
+            error.response?.data?.error ?? error.message,
+          );
+        }
+      });
+
+    return () => controller.abort();
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (!currentUserId) return undefined;
+
+    const controller = new AbortController();
+    getConversationDeletions({ signal: controller.signal })
+      .then((conversations) => {
+        if (controller.signal.aborted) return;
+        setDeletedConversations(conversations);
+        const activeDeletedConversation = conversations.find(
+          (conversation) => conversation.room === activeRoomRef.current,
+        );
+        if (activeDeletedConversation) {
+          const { room } = activeDeletedConversation;
+          setPinnedConversations((currentPins) =>
+            currentPins.filter((conversation) => conversation.room !== room),
+          );
+          setRoomSummaries((currentSummaries) => {
+            const { [room]: removedSummary, ...remainingSummaries } = currentSummaries;
+            return removedSummary ? remainingSummaries : currentSummaries;
+          });
+          setChatMessages((currentMessages) =>
+            currentMessages.filter((message) => message.room !== room),
+          );
+          const socket = socketRef.current;
+          if (socket?.connected && joinedRoomRef.current === room) {
+            socket.emit("leave_room", { room });
+            joinedRoomRef.current = null;
+          }
+          activeRoomRef.current = null;
+          activeDmRecipientIdRef.current = null;
+          pendingActiveRoomSeenRef.current = null;
+          historyGenerationRef.current += 1;
+          setActiveRoom(null);
+          setActiveDmRecipientId(null);
+          setActiveRoomMembers([]);
+          setActiveRoomMemberSocketIds(new Set());
+          setTypingSocketIds(new Set());
+          setEditingMessage(null);
+          setReplyingTo(null);
+          setReactionDetailsMessageId(null);
+          setMessageValue("");
+        }
+      })
+      .catch((error) => {
+        if (error.code !== "ERR_CANCELED") {
+          console.error(
+            "[conversation-deletions] load_error",
+            error.response?.data?.error ?? error.message,
+          );
+        }
+      });
+
+    return () => controller.abort();
+  }, [currentUserId]);
+
+  useEffect(() => {
+    const pinnedDmUsers = pinnedConversations.filter(
+      (conversation) => conversation.recipientId,
+    );
+    if (pinnedDmUsers.length === 0) return undefined;
+
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      setAvailableDmUsers((currentUsers) => {
+        const usersById = new Map(
+          currentUsers.map((availableUser) => [
+            String(availableUser.userId),
+            availableUser,
+          ]),
+        );
+        let changed = false;
+
+        pinnedDmUsers.forEach((conversation) => {
+          const recipientId = String(conversation.recipientId);
+          if (usersById.has(recipientId)) return;
+          changed = true;
+          usersById.set(recipientId, {
+            userId: recipientId,
+            username: conversation.username || "User",
+            profileImage: conversation.profileImage || "",
+          });
+        });
+
+        return changed ? Array.from(usersById.values()) : currentUsers;
+      });
+      setDmConversationUserIds((currentIds) => {
+        const nextIds = new Set(currentIds);
+        pinnedDmUsers.forEach((conversation) =>
+          nextIds.add(String(conversation.recipientId)),
+        );
+        return nextIds.size === currentIds.size ? currentIds : nextIds;
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pinnedConversations]);
+
+  useEffect(() => {
+    if (!currentUserId) return undefined;
+
+    const controller = new AbortController();
+    Promise.allSettled(
+      chats.map(async (chat) => {
+        const latestPage = await getLatestRoomMessagePage(chat.room, {
+          signal: controller.signal,
+        });
+        const latestMessage = normalizeSocketMessage(
+          latestPage.messages[latestPage.messages.length - 1],
+          currentUserId,
+        );
+        if (latestMessage) updateRoomLatestMessage(latestMessage);
+      }),
+    ).then((results) => {
+      if (controller.signal.aborted) return;
+      results.forEach((result, index) => {
+        if (result.status === "rejected" && result.reason?.code !== "ERR_CANCELED") {
+          console.error(
+            `[rooms] summary_error:${chats[index].room}`,
+            result.reason?.response?.data?.error ?? result.reason?.message,
+          );
+        }
+      });
+    });
+
+    return () => controller.abort();
   }, [currentUserId]);
   const userChats = availableDmUsers
     .filter(
@@ -1213,6 +1549,12 @@ export default function ChatPlaceholder() {
     .filter((chat) => chat.room);
   const dmChats = userChats.filter((chat) =>
     dmConversationUserIds.has(chat.recipientId),
+  );
+  const roomChats = chats.filter(
+    (chat) => !deletedConversationRooms.has(chat.room),
+  );
+  const visibleDmChats = dmChats.filter(
+    (chat) => !deletedConversationRooms.has(chat.room),
   );
   const roomMemberChats = Array.from(
     new Map(
@@ -1238,7 +1580,7 @@ export default function ChatPlaceholder() {
         "bg-[#E4ECF7] text-[#355A7A] dark:bg-[#2B3848] dark:text-[#C5DBEE]",
     }))
     .filter((chat) => chat.room);
-  const allChats = [...chats, ...dmChats];
+  const allChats = [...roomChats, ...visibleDmChats];
   const friendRequestNotifications = notificationPreferences.friendRequests
     ? incomingFriendRequests.map((request) => ({
         id: `friend-request:${request.requestId}`,
@@ -1314,14 +1656,14 @@ export default function ChatPlaceholder() {
   ).length;
   const visibleChats =
     activeSection === "dms"
-      ? dmChats
+      ? visibleDmChats
       : activeSection === "friends"
         ? userChats
         : activeSection === "members"
           ? roomMemberChats
           : activeSection === "member_profile" && activeProfileChat
             ? [activeProfileChat]
-            : chats;
+            : roomChats;
   const peopleMode = ["friends", "members", "member_profile"].includes(
     activeSection,
   );
@@ -1348,13 +1690,13 @@ export default function ChatPlaceholder() {
         : activeSection === "members"
           ? "No other members are currently in this room."
           : undefined;
-  const activeChat =
-    allChats.find((chat) => chat.room === activeRoom) ?? chats[0];
+  const activeChat = allChats.find((chat) => chat.room === activeRoom) ?? null;
   const activeChatOnline =
-    activeRoomMemberSocketIds.size > 0 ||
+    Boolean(activeChat) &&
+    (activeRoomMemberSocketIds.size > 0 ||
     (activeChat.recipientId
       ? onlineUserKeys.has(`id:${activeChat.recipientId}`)
-      : onlineUserKeys.has(presenceNameKey(activeChat.name)));
+      : onlineUserKeys.has(presenceNameKey(activeChat.name))));
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1382,7 +1724,16 @@ export default function ChatPlaceholder() {
           ).values(),
         );
 
-        setAvailableDmUsers(uniqueUsers);
+        setAvailableDmUsers((currentUsers) =>
+          Array.from(
+            new Map(
+              [...currentUsers, ...uniqueUsers].map((availableUser) => [
+                String(availableUser.userId),
+                availableUser,
+              ]),
+            ).values(),
+          ),
+        );
         setOnlineUserKeys((currentKeys) => {
           const nextKeys = new Set(currentKeys);
           uniqueUsers.forEach((availableUser) => {
@@ -1484,6 +1835,10 @@ export default function ChatPlaceholder() {
 
     function handleConnect() {
       const room = activeRoomRef.current;
+      if (!room) {
+        setSocketConnected(true);
+        return;
+      }
       if (joinedRoomRef.current === room) return;
 
       const payload = { room };
@@ -1567,6 +1922,13 @@ export default function ChatPlaceholder() {
         return;
       }
       if (hiddenMessageIdsRef.current.has(message.backendId)) return;
+
+      if (
+        message.direction === "incoming" &&
+        deletedConversationRoomsRef.current.has(message.room)
+      ) {
+        restoreDeletedConversation(message.room);
+      }
 
       receivedSocketMessageIdsRef.current.add(message.id);
 
@@ -2076,6 +2438,8 @@ export default function ChatPlaceholder() {
   }, [currentUserId, user?.profileImage, user?.username]);
 
   useEffect(() => {
+    if (!activeRoom) return undefined;
+
     const controller = new AbortController();
     const generation = historyGenerationRef.current + 1;
     historyGenerationRef.current = generation;
@@ -2821,6 +3185,133 @@ export default function ChatPlaceholder() {
     setAttachmentError("");
   }
 
+  async function handleToggleConversationPin(room) {
+    if (!room) return;
+
+    const previousPins = pinnedConversations;
+    const isPinned = previousPins.some(
+      (conversation) => conversation.room === room,
+    );
+    setPinnedConversations(
+      isPinned
+        ? previousPins.filter((conversation) => conversation.room !== room)
+        : [{ room, pinnedAt: new Date().toISOString() }, ...previousPins],
+    );
+
+    try {
+      const savedPins = await setConversationPin(room, !isPinned);
+      setPinnedConversations(savedPins);
+    } catch (error) {
+      setPinnedConversations(previousPins);
+      console.error(
+        "[conversation-pins] update_error",
+        error.response?.data?.error ?? error.message,
+      );
+    }
+  }
+
+  function restoreDeletedConversation(room) {
+    if (!room || !deletedConversationRoomsRef.current.has(room)) return;
+
+    deletedConversationRoomsRef.current.delete(room);
+    setDeletedConversations((currentConversations) =>
+      currentConversations.filter((conversation) => conversation.room !== room),
+    );
+    setConversationDeletion(room, false).catch((error) => {
+      console.error(
+        "[conversation-deletions] restore_error",
+        error.response?.data?.error ?? error.message,
+      );
+    });
+  }
+
+  function clearConversationFromUi(chat) {
+    const room = chat?.room;
+    if (!room) return;
+
+    setPinnedConversations((currentPins) =>
+      currentPins.filter((conversation) => conversation.room !== room),
+    );
+    setRoomSummaries((currentSummaries) => {
+      const { [room]: removedSummary, ...remainingSummaries } = currentSummaries;
+      return removedSummary ? remainingSummaries : currentSummaries;
+    });
+    setChatMessages((currentMessages) =>
+      currentMessages.filter((message) => message.room !== room),
+    );
+    setReadNotificationIds((currentIds) => {
+      const notificationId = `conversation:${room}`;
+      if (!currentIds.has(notificationId)) return currentIds;
+      const nextIds = new Set(currentIds);
+      nextIds.delete(notificationId);
+      return nextIds;
+    });
+    if (chat.recipientId) {
+      setDmConversationUserIds((currentIds) => {
+        if (!currentIds.has(chat.recipientId)) return currentIds;
+        const nextIds = new Set(currentIds);
+        nextIds.delete(chat.recipientId);
+        return nextIds;
+      });
+    }
+    if (activeProfileChat?.room === room) setActiveProfileChat(null);
+
+    if (activeRoomRef.current !== room) return;
+
+    stopTyping();
+    const socket = socketRef.current;
+    if (socket?.connected && joinedRoomRef.current === room) {
+      socket.emit("leave_room", { room });
+      joinedRoomRef.current = null;
+    }
+    activeRoomRef.current = null;
+    activeDmRecipientIdRef.current = null;
+    pendingActiveRoomSeenRef.current = null;
+    historyGenerationRef.current += 1;
+    setActiveRoom(null);
+    setActiveDmRecipientId(null);
+    setActiveRoomMembers([]);
+    setActiveRoomMemberSocketIds(new Set());
+    setTypingSocketIds(new Set());
+    setChatMessages([]);
+    setEditingMessage(null);
+    setReplyingTo(null);
+    setReactionDetailsMessageId(null);
+    setMessageValue("");
+    cancelVoiceRecording();
+    setSelectedFile(null);
+    setAttachmentError("");
+  }
+
+  function handleRequestDeleteConversation(chat) {
+    if (!chat?.room) return;
+    setDeleteConversationError("");
+    setDeleteConfirmation(chat);
+  }
+
+  async function handleConfirmDeleteConversation() {
+    const chat = deleteConfirmation;
+    if (!chat?.room || deletingConversation) return;
+
+    setDeletingConversation(true);
+    setDeleteConversationError("");
+    try {
+      const savedDeletions = await setConversationDeletion(chat.room, true);
+      deletedConversationRoomsRef.current.add(chat.room);
+      setDeletedConversations(savedDeletions);
+      clearConversationFromUi(chat);
+      setDeleteConfirmation(null);
+    } catch (error) {
+      setDeleteConversationError(
+        error.response?.data?.error ??
+          error.message ??
+          "Unable to delete this conversation.",
+      );
+    } finally {
+      setDeletingConversation(false);
+    }
+  }
+
   function handleSectionChange(section) {
     if (
       [
@@ -2855,6 +3346,8 @@ export default function ChatPlaceholder() {
     }
 
     const normalizedRecipientId = String(recipientId);
+    const room = chat.room ?? getDmRoomId(currentUserId, normalizedRecipientId);
+    restoreDeletedConversation(room);
     setAvailableDmUsers((currentUsers) =>
       currentUsers.some(
         (availableUser) => availableUser.userId === normalizedRecipientId,
@@ -2874,7 +3367,7 @@ export default function ChatPlaceholder() {
     setActiveSection("dms");
     handleChatSelect({
       ...chat,
-      room: chat.room ?? getDmRoomId(currentUserId, normalizedRecipientId),
+      room,
       recipientId: normalizedRecipientId,
     });
   }
@@ -3194,8 +3687,11 @@ export default function ChatPlaceholder() {
               activeRoomOnline={activeChatOnline}
               onlineUserKeys={onlineUserKeys}
               roomSummaries={roomSummaries}
+              pinnedConversations={pinnedConversations}
               relativeTimeNow={relativeTimeNow}
               onSelectChat={handleChatSelect}
+              onTogglePin={handleToggleConversationPin}
+              onRequestDelete={handleRequestDeleteConversation}
               onOpenProfile={handleOpenProfile}
               onMessageUser={handleMessageUser}
             />
@@ -3247,6 +3743,19 @@ export default function ChatPlaceholder() {
           onRemove={(emoji) =>
             handleReactToMessage(reactionDetailsMessage, emoji, "remove")
           }
+        />
+      )}
+      {deleteConfirmation && (
+        <DeleteConversationModal
+          conversation={deleteConfirmation}
+          deleting={deletingConversation}
+          error={deleteConversationError}
+          onClose={() => {
+            if (deletingConversation) return;
+            setDeleteConfirmation(null);
+            setDeleteConversationError("");
+          }}
+          onConfirm={handleConfirmDeleteConversation}
         />
       )}
     </main>

@@ -35,6 +35,52 @@ async function updateProfile(req, res, next) {
   }
 }
 
+async function getConversationPins(req, res, next) {
+  try {
+    const pinnedConversations = await userService.getConversationPins(req.user.id);
+    res.status(200).json({ pinnedConversations });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function setConversationPin(req, res, next) {
+  try {
+    const pinnedConversations = await userService.setConversationPin(
+      req.user.id,
+      req.body?.room,
+      req.body?.pinned,
+    );
+    res.status(200).json({ pinnedConversations });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function getConversationDeletions(req, res, next) {
+  try {
+    const deletedConversations = await userService.getConversationDeletions(
+      req.user.id,
+    );
+    res.status(200).json({ deletedConversations });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function setConversationDeletion(req, res, next) {
+  try {
+    const deletedConversations = await userService.setConversationDeletion(
+      req.user.id,
+      req.body?.room,
+      req.body?.deleted,
+    );
+    res.status(200).json({ deletedConversations });
+  } catch (err) {
+    next(err);
+  }
+}
+
 async function getFriends(req, res, next) {
   try {
     res.status(200).json(await friendService.getFriendLists(req.user.id));
@@ -136,6 +182,10 @@ async function removeFriend(req, res, next) {
 module.exports = {
   getOnlineUsers,
   updateProfile,
+  getConversationPins,
+  setConversationPin,
+  getConversationDeletions,
+  setConversationDeletion,
   getFriends,
   searchUsers,
   sendFriendRequest,
