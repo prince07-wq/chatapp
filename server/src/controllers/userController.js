@@ -27,6 +27,8 @@ async function updateProfile(req, res, next) {
     const publicProfile = {
       userId: user.id,
       username: user.username,
+      displayName: user.displayName,
+      bio: user.bio,
       profileImage: user.profileImage,
     };
 
@@ -127,6 +129,18 @@ async function setConversationArchive(req, res, next) {
       req.body?.archived,
     );
     res.status(200).json({ archivedConversations });
+  } catch (err) {
+    next(err);
+  }
+}
+
+async function clearConversation(req, res, next) {
+  try {
+    const clearedConversation = await userService.clearConversation(
+      req.user.id,
+      req.body?.room,
+    );
+    res.status(200).json({ clearedConversation });
   } catch (err) {
     next(err);
   }
@@ -254,6 +268,7 @@ module.exports = {
   setConversationMute,
   getConversationArchives,
   setConversationArchive,
+  clearConversation,
   getFriends,
   searchUsers,
   searchChat,

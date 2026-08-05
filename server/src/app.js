@@ -19,6 +19,12 @@ app.use("/api/v1/auth", authLimiter, require("./routes/v1/authRoutes"));
 app.use("/api/v1/messages", generalLimiter, require("./routes/v1/messageRoutes"));
 app.use("/api/v1/users", generalLimiter, require("./routes/v1/userRoutes"));
 app.use("/api/v1/files", generalLimiter, require("./routes/v1/fileRoutes"));
+app.use("/api/v1/rooms", generalLimiter, require("./routes/v1/roomRoutes"));
+app.use(
+  "/api/v1/conversation-details",
+  generalLimiter,
+  require("./routes/v1/conversationDetailsRoutes"),
+);
 
 app.use(require("./middleware/errorHandler"));
 

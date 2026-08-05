@@ -28,6 +28,7 @@ export default function ConversationToolbar({
   activeChatOnline,
   onBack,
   onShowMembers,
+  onOpenDetails,
 }) {
   return (
     <ConversationHeader
@@ -41,6 +42,7 @@ export default function ConversationToolbar({
       statusText={activeChatOnline ? "Online" : "Offline"}
       online={activeChatOnline}
       onBack={onBack}
+      onOpenDetails={onOpenDetails}
       headerActions={
         <>
           <IconButton label="Start a voice call" className="hidden sm:flex">

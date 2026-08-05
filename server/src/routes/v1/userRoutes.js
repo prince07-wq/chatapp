@@ -10,6 +10,7 @@ const {
   setConversationMute,
   getConversationArchives,
   setConversationArchive,
+  clearConversation,
   getFriends,
   searchUsers,
   searchChat,
@@ -32,6 +33,7 @@ router.get("/conversation-mutes", authenticate, getConversationMutes);
 router.patch("/conversation-mutes", authenticate, setConversationMute);
 router.get("/conversation-archives", authenticate, getConversationArchives);
 router.patch("/conversation-archives", authenticate, setConversationArchive);
+router.patch("/conversation-clears", authenticate, clearConversation);
 router.get("/chat-search", authenticate, searchChat);
 router.get("/search", authenticate, searchUsers);
 router.get("/friends", authenticate, getFriends);

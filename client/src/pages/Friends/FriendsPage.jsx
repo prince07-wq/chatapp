@@ -154,8 +154,9 @@ export default function FriendsPage({
     return {
       id: `dm-${person.userId}`,
       recipientId: String(person.userId),
-      name: person.username || "User",
-      initials: initials(person.username),
+      name: person.displayName || person.username || "User",
+      username: person.username,
+      initials: initials(person.displayName || person.username),
       tone: avatarFor(person).tone,
       imageSrc: resolveUploadedFileUrl(person.profileImage),
     };
@@ -316,7 +317,7 @@ export default function FriendsPage({
                   <UserListItem
                     key={person.userId}
                     avatar={avatarFor(person)}
-                    name={person.username}
+                    name={person.displayName || person.username}
                     online={online}
                     onlineIndicatorClassName={
                       query.trim() && online ? "bg-[#22C55E]" : undefined

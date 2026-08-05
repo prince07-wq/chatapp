@@ -1,6 +1,7 @@
 const User = require("../models/User");
 const AppError = require("../utils/AppError");
 const mongoose = require("mongoose");
+const conversationService = require("./conversationService");
 
 const USERNAME_REGEX = /^[a-zA-Z0-9_.-]{2,32}$/;
 const MAX_PINNED_CONVERSATIONS = 100;
@@ -41,7 +42,7 @@ async function serializePins(userId, pinnedConversations = []) {
   ];
   const recipients = recipientIds.length
     ? await User.find({ _id: { $in: recipientIds } })
-        .select("username profileImage")
+        .select("username displayName bio profileImage")
         .lean()
     : [];
   const recipientsById = new Map(
@@ -58,6 +59,8 @@ async function serializePins(userId, pinnedConversations = []) {
           ...pin,
           recipientId,
           username: recipient.username,
+          displayName: recipient.displayName || "",
+          bio: recipient.bio || "",
           profileImage: recipient.profileImage || "",
         }
       : pin;
@@ -75,6 +78,7 @@ async function setConversationPin(userId, room, pinned) {
   if (typeof pinned !== "boolean") {
     throw new AppError("'pinned' must be a boolean.", 400);
   }
+  await conversationService.assertConversationAccess(userId, normalizedRoom);
 
   const user = await User.findById(userId);
   if (!user) throw new AppError("User not found.", 404);
@@ -116,6 +120,7 @@ async function setConversationDeletion(userId, room, deleted) {
   if (typeof deleted !== "boolean") {
     throw new AppError("'deleted' must be a boolean.", 400);
   }
+  await conversationService.assertConversationAccess(userId, normalizedRoom);
 
   const user = await User.findById(userId);
   if (!user) throw new AppError("User not found.", 404);
@@ -179,6 +184,7 @@ async function setConversationMute(userId, room, muted, duration) {
   if (typeof muted !== "boolean") {
     throw new AppError("'muted' must be a boolean.", 400);
   }
+  await conversationService.assertConversationAccess(userId, normalizedRoom);
   if (muted && !Object.hasOwn(MUTE_DURATIONS, duration)) {
     throw new AppError("'duration' must be 1h, 8h, 1w, or forever.", 400);
   }
@@ -231,6 +237,7 @@ async function setConversationArchive(userId, room, archived) {
   if (typeof archived !== "boolean") {
     throw new AppError("'archived' must be a boolean.", 400);
   }
+  await conversationService.assertConversationAccess(userId, normalizedRoom);
   const user = await User.findById(userId);
   if (!user) throw new AppError("User not found.", 404);
   const existingIndex = user.archivedConversations.findIndex(
@@ -251,7 +258,32 @@ async function setConversationArchive(userId, room, archived) {
   return serializeArchivedConversations(user.archivedConversations);
 }
 
-async function updateProfile(userId, { username, profileImage }) {
+async function getConversationClear(userId, room) {
+  const normalizedRoom = normalizeRoom(room);
+  await conversationService.assertConversationAccess(userId, normalizedRoom);
+  const user = await User.findById(userId).select("clearedConversations");
+  if (!user) throw new AppError("User not found.", 404);
+  return user.clearedConversations.find(
+    (conversation) => conversation.room === normalizedRoom,
+  )?.clearedAt ?? null;
+}
+
+async function clearConversation(userId, room) {
+  const normalizedRoom = normalizeRoom(room);
+  await conversationService.assertConversationAccess(userId, normalizedRoom);
+  const user = await User.findById(userId);
+  if (!user) throw new AppError("User not found.", 404);
+  const clearedAt = new Date();
+  const existing = user.clearedConversations.find(
+    (conversation) => conversation.room === normalizedRoom,
+  );
+  if (existing) existing.clearedAt = clearedAt;
+  else user.clearedConversations.push({ room: normalizedRoom, clearedAt });
+  await user.save();
+  return { room: normalizedRoom, clearedAt };
+}
+
+async function updateProfile(userId, { username, displayName, bio, profileImage }) {
   const user = await User.findById(userId);
   if (!user) throw new AppError("User not found.", 404);
 
@@ -270,6 +302,20 @@ async function updateProfile(userId, { username, profileImage }) {
     });
     if (existing) throw new AppError("Username is already taken.", 409);
     user.username = normalizedUsername;
+  }
+
+  if (displayName !== undefined) {
+    if (typeof displayName !== "string" || displayName.trim().length > 80) {
+      throw new AppError("Display name must be 80 characters or fewer.", 400);
+    }
+    user.displayName = displayName.trim();
+  }
+
+  if (bio !== undefined) {
+    if (typeof bio !== "string" || bio.trim().length > 280) {
+      throw new AppError("Bio must be 280 characters or fewer.", 400);
+    }
+    user.bio = bio.trim();
   }
 
   if (profileImage !== undefined) {
@@ -293,4 +339,6 @@ module.exports = {
   setConversationMute,
   getConversationArchives,
   setConversationArchive,
+  getConversationClear,
+  clearConversation,
 };

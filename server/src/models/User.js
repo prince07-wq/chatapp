@@ -33,9 +33,19 @@ const archivedConversationSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const clearedConversationSchema = new mongoose.Schema(
+  {
+    room: { type: String, required: true, trim: true },
+    clearedAt: { type: Date, required: true, default: Date.now },
+  },
+  { _id: false },
+);
+
 const userSchema = new mongoose.Schema(
   {
     username: { type: String, required: true, unique: true, trim: true },
+    displayName: { type: String, trim: true, maxlength: 80, default: "" },
+    bio: { type: String, trim: true, maxlength: 280, default: "" },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true },
     profileImage: { type: String, default: "", trim: true },
@@ -43,6 +53,7 @@ const userSchema = new mongoose.Schema(
     deletedConversations: { type: [deletedConversationSchema], default: [] },
     mutedConversations: { type: [mutedConversationSchema], default: [] },
     archivedConversations: { type: [archivedConversationSchema], default: [] },
+    clearedConversations: { type: [clearedConversationSchema], default: [] },
   },
   { timestamps: true }
 );
@@ -60,6 +71,8 @@ userSchema.methods.toSafeObject = function toSafeObject() {
   return {
     id: this._id.toString(),
     username: this.username,
+    displayName: this.displayName || "",
+    bio: this.bio || "",
     email: this.email,
     profileImage: this.profileImage || "",
   };

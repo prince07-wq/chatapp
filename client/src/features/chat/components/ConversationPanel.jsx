@@ -39,6 +39,7 @@ export default function ConversationPanel({
   highlightedMessageBackendId,
   mobileVisible = true,
   onBack,
+  onOpenDetails,
 }) {
   if (!activeChat) {
     return (
@@ -57,6 +58,7 @@ export default function ConversationPanel({
         activeChatOnline={activeChatOnline}
         onBack={onBack}
         onShowMembers={onShowMembers}
+        onOpenDetails={onOpenDetails}
       />
       <MessageList
         messages={messages}
@@ -97,4 +99,3 @@ export default function ConversationPanel({
     </section>
   );
 }
-

@@ -62,6 +62,8 @@ import usePresence from "../../features/chat/hooks/usePresence.js";
 import useTyping from "../../features/chat/hooks/useTyping.js";
 import useUnreadState from "../../features/chat/hooks/useUnreadState.js";
 import useVoiceRecorder from "../../features/chat/hooks/useVoiceRecorder.js";
+import ConversationDetailsPanel from "../../features/conversation-details/components/ConversationDetailsPanel.jsx";
+import useConversationDetails from "../../features/conversation-details/hooks/useConversationDetails.js";
 
 const INITIAL_ROOM = "test-room";
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
@@ -691,6 +693,8 @@ export default function ChatPlaceholder() {
           usersById.set(recipientId, {
             userId: recipientId,
             username: conversation.username || "User",
+            displayName: conversation.displayName || "",
+            bio: conversation.bio || "",
             profileImage: conversation.profileImage || "",
           });
         });
@@ -750,8 +754,9 @@ export default function ChatPlaceholder() {
       id: `dm-${availableUser.userId}`,
       room: getDmRoomId(currentUserId, availableUser.userId),
       recipientId: String(availableUser.userId),
-      name: availableUser.username || "User",
-      initials: getUserInitials(availableUser.username),
+      name: availableUser.displayName || availableUser.username || "User",
+      username: availableUser.username,
+      initials: getUserInitials(availableUser.displayName || availableUser.username),
       imageSrc: resolveUploadedFileUrl(availableUser.profileImage),
       preview: "Start a conversation",
       time: "",
@@ -783,8 +788,9 @@ export default function ChatPlaceholder() {
       id: `member-${member.userId}`,
       room: getDmRoomId(currentUserId, member.userId),
       recipientId: String(member.userId),
-      name: member.username || "User",
-      initials: getUserInitials(member.username),
+      name: member.displayName || member.username || "User",
+      username: member.username,
+      initials: getUserInitials(member.displayName || member.username),
       imageSrc: resolveUploadedFileUrl(member.profileImage),
       preview: "Message",
       time: "",
@@ -904,12 +910,16 @@ export default function ChatPlaceholder() {
           ? "No other members are currently in this room."
           : undefined;
   const activeChat = allChats.find((chat) => chat.room === activeRoom) ?? null;
+  const conversationDetailsController = useConversationDetails(activeChat, {
+    refreshKey: `${socketConnected}:${friendsRefreshVersion}`,
+  });
+  const displayedActiveChat = conversationDetailsController.resolvedChat;
   const activeChatOnline =
-    Boolean(activeChat) &&
+    Boolean(displayedActiveChat) &&
     (activeRoomMemberSocketIds.size > 0 ||
-    (activeChat.recipientId
-      ? onlineUserKeys.has(`id:${activeChat.recipientId}`)
-      : onlineUserKeys.has(presenceNameKey(activeChat.name))));
+    (displayedActiveChat.recipientId
+      ? onlineUserKeys.has(`id:${displayedActiveChat.recipientId}`)
+      : onlineUserKeys.has(presenceNameKey(displayedActiveChat.name))));
 
   useEffect(() => {
     const controller = new AbortController();
@@ -931,6 +941,8 @@ export default function ChatPlaceholder() {
                 {
                   userId: String(availableUser.userId),
                   username: availableUser.username || "User",
+                  displayName: availableUser.displayName || "",
+                  bio: availableUser.bio || "",
                   profileImage: availableUser.profileImage || "",
                 },
               ]),
@@ -1074,6 +1086,8 @@ export default function ChatPlaceholder() {
             .map((availableUser) => ({
               userId: String(availableUser.userId),
               username: availableUser.username || "User",
+              displayName: availableUser.displayName || "",
+              bio: availableUser.bio || "",
               profileImage: availableUser.profileImage || "",
             }));
 
@@ -1455,7 +1469,7 @@ export default function ChatPlaceholder() {
       );
     }
 
-    function handleUserOnline({ userId, username, profileImage } = {}) {
+    function handleUserOnline({ userId, username, displayName, bio, profileImage } = {}) {
       if (userId != null && String(userId) === String(currentUserId)) return;
 
       if (userId != null) {
@@ -1471,6 +1485,8 @@ export default function ChatPlaceholder() {
               {
                 userId: normalizedUserId,
                 username: username || "User",
+                displayName: displayName || "",
+                bio: bio || "",
                 profileImage: profileImage || "",
               },
             ];
@@ -1478,6 +1494,8 @@ export default function ChatPlaceholder() {
 
           if (
             (!username || currentUsers[existingIndex].username === username) &&
+            (displayName === undefined || currentUsers[existingIndex].displayName === displayName) &&
+            (bio === undefined || currentUsers[existingIndex].bio === bio) &&
             (profileImage === undefined ||
               currentUsers[existingIndex].profileImage === profileImage)
           ) {
@@ -1488,7 +1506,9 @@ export default function ChatPlaceholder() {
             index === existingIndex
               ? {
                   ...availableUser,
-                  username,
+                  username: username ?? availableUser.username,
+                  displayName: displayName ?? availableUser.displayName ?? "",
+                  bio: bio ?? availableUser.bio ?? "",
                   profileImage:
                     profileImage ?? availableUser.profileImage ?? "",
                 }
@@ -1523,12 +1543,16 @@ export default function ChatPlaceholder() {
     function handleUserProfileUpdated({
       userId,
       username,
+      displayName,
+      bio,
       profileImage,
     } = {}) {
       if (userId == null) return;
       const normalizedUserId = String(userId);
       const profileChanges = {
         username: username || "User",
+        displayName: displayName || "",
+        bio: bio || "",
         profileImage: profileImage || "",
       };
 
@@ -1550,8 +1574,9 @@ export default function ChatPlaceholder() {
         String(currentChat?.recipientId) === normalizedUserId
           ? {
               ...currentChat,
-              name: profileChanges.username,
-              initials: getUserInitials(profileChanges.username),
+              name: profileChanges.displayName || profileChanges.username,
+              username: profileChanges.username,
+              initials: getUserInitials(profileChanges.displayName || profileChanges.username),
               imageSrc: resolveUploadedFileUrl(profileChanges.profileImage),
             }
           : currentChat,
@@ -2572,7 +2597,12 @@ export default function ChatPlaceholder() {
         ? currentUsers
         : [
             ...currentUsers,
-            { userId: normalizedRecipientId, username: chat.name || "User" },
+            {
+              userId: normalizedRecipientId,
+              username: chat.username || chat.name || "User",
+              displayName: chat.username ? chat.name || "" : "",
+              profileImage: chat.imageSrc || "",
+            },
           ],
     );
     setDmConversationUserIds((currentIds) => {
@@ -2967,6 +2997,7 @@ export default function ChatPlaceholder() {
             <ChatSidebar
               title={listTitle}
               chatItems={visibleChats}
+              conversationAvatarOverride={displayedActiveChat}
               emptyMessage={listEmptyMessage}
               peopleMode={peopleMode}
               activeRoom={activeRoom}
@@ -2990,7 +3021,7 @@ export default function ChatPlaceholder() {
               mobileVisible={showMobileChatList}
             />
             <ConversationPanel
-              activeChat={activeChat}
+              activeChat={displayedActiveChat}
               activeChatOnline={activeChatOnline}
               isTyping={typingSocketIds.size > 0}
               messages={chatMessages}
@@ -3028,10 +3059,71 @@ export default function ChatPlaceholder() {
               highlightedMessageBackendId={searchMessageTarget?.messageId}
               mobileVisible={!showMobileChatList}
               onBack={() => setShowMobileChatList(true)}
+              onOpenDetails={conversationDetailsController.openDetails}
             />
           </>
         )}
       </div>
+      <ConversationDetailsPanel
+        controller={conversationDetailsController}
+        currentUserId={currentUserId}
+        online={activeChatOnline}
+        onlineUserKeys={onlineUserKeys}
+        muted={Boolean(activeChat?.room && isMutedConversation(activeChat.room))}
+        pinned={Boolean(
+          activeChat?.room &&
+            pinnedConversations.some(
+              (conversation) => conversation.room === activeChat.room,
+            )
+        )}
+        archived={Boolean(
+          activeChat?.room &&
+            archivedConversations.some(
+              (conversation) => conversation.room === activeChat.room,
+            )
+        )}
+        onMessageMember={(member) => {
+          conversationDetailsController.closeDetails();
+          handleMessageUser({
+            recipientId: member.userId,
+            name: member.displayName || member.username,
+            imageSrc: resolveUploadedFileUrl(member.profileImage),
+          });
+        }}
+        onOpenProfile={(member) => {
+          conversationDetailsController.closeDetails();
+          handleOpenProfile({
+            recipientId: member.userId,
+            name: member.displayName || member.username,
+            imageSrc: resolveUploadedFileUrl(member.profileImage),
+            room: getDmRoomId(currentUserId, member.userId),
+          });
+        }}
+        onMute={() => {
+          conversationDetailsController.closeDetails();
+          if (activeChat) handleRequestMuteConversation(activeChat);
+        }}
+        onPin={() =>
+          activeChat?.room && handleToggleConversationPin(activeChat.room)
+        }
+        onArchive={() => activeChat && handleToggleConversationArchive(activeChat)}
+        onCleared={() => {
+          setChatMessages([]);
+          oldestPageRef.current = 1;
+          hasOlderMessagesRef.current = false;
+        }}
+        onDelete={() => {
+          conversationDetailsController.closeDetails();
+          if (activeChat) handleRequestDeleteConversation(activeChat);
+        }}
+        onExited={(savedDeletions) => {
+          if (!activeChat) return;
+          deletedConversationRoomsRef.current.add(activeChat.room);
+          setDeletedConversations(savedDeletions);
+          clearConversationFromUi(activeChat);
+        }}
+        onFriendRemoved={() => setFriendsRefreshVersion((version) => version + 1)}
+      />
       <MobileNavigation
         activeSection={activeSection}
         incomingFriendCount={incomingFriendCount}

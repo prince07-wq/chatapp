@@ -4,7 +4,9 @@ import { EllipsisVertical, PenLine, Plus, Search, SlidersHorizontal } from "luci
 import ChatListItem from "../../../components/Chat/ChatListItem.jsx";
 import UserListItem from "../../../components/Chat/UserListItem.jsx";
 import ThemeToggle from "../../../components/UI/ThemeToggle.jsx";
+import { resolveUploadedFileUrl } from "../../../api/fileApi.js";
 import { searchChat as searchChatRequest } from "../../../api/userApi.js";
+import { getConversationDetails } from "../../conversation-details/api/conversationDetailsApi.js";
 import { getConversationActivityTime, getRoomPreview, isConversationMuted } from "../utils/conversation.js";
 import ConversationContextMenu from "./ConversationContextMenu.jsx";
 
@@ -40,6 +42,7 @@ function IconButton({ label, children, className = "", ...props }) {
 export default function ChatSidebar({
   title = "Chats",
   chatItems = [],
+  conversationAvatarOverride,
   emptyMessage,
   peopleMode = false,
   activeRoom,
@@ -69,9 +72,80 @@ export default function ChatSidebar({
   const [searchLoadingMore, setSearchLoadingMore] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [conversationMenu, setConversationMenu] = useState(null);
+  const [persistedAvatarByRoom, setPersistedAvatarByRoom] = useState(
+    () => new Map(),
+  );
   const searchControllerRef = useRef(null);
   const searchRequestIdRef = useRef(0);
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const uniqueChatItems = Array.from(
+    new Map(chatItems.map((chat) => [chat.room, chat])).values(),
+  );
+  const roomKey = uniqueChatItems.map((chat) => chat.room).sort().join("\u0000");
+  const chatAvatarKey = JSON.stringify(
+    uniqueChatItems.map((chat) => [chat.room, chat.imageSrc || ""]),
+  );
+
+  useEffect(() => {
+    if (!roomKey) return undefined;
+    const controller = new AbortController();
+    const rooms = roomKey.split("\u0000");
+    Promise.allSettled(
+      rooms.map((room) =>
+        getConversationDetails(room, { signal: controller.signal }),
+      ),
+    ).then((results) => {
+      if (controller.signal.aborted) return;
+      const savedAvatars = new Map();
+      results.forEach((result, index) => {
+        if (result.status !== "fulfilled") return;
+        const avatar = result.value.type === "room"
+          ? result.value.avatar
+          : result.value.recipient?.profileImage;
+        if (avatar) savedAvatars.set(rooms[index], resolveUploadedFileUrl(avatar));
+      });
+      setPersistedAvatarByRoom(savedAvatars);
+    });
+    return () => controller.abort();
+  }, [roomKey]);
+
+  useEffect(() => {
+    const avatarEntries = JSON.parse(chatAvatarKey).filter(([, imageSrc]) => imageSrc);
+    if (!avatarEntries.length) return undefined;
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      setPersistedAvatarByRoom((current) => {
+        const next = new Map(current);
+        let changed = false;
+        avatarEntries.forEach(([room, imageSrc]) => {
+          const normalized = resolveUploadedFileUrl(imageSrc);
+          if (next.get(room) === normalized) return;
+          next.set(room, normalized);
+          changed = true;
+        });
+        return changed ? next : current;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [chatAvatarKey]);
+
+  useEffect(() => {
+    const overrideRoom = conversationAvatarOverride?.room;
+    const overrideImage = conversationAvatarOverride?.imageSrc;
+    if (!overrideRoom || !overrideImage) return undefined;
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      setPersistedAvatarByRoom((current) => {
+        if (current.get(overrideRoom) === overrideImage) return current;
+        const next = new Map(current);
+        next.set(overrideRoom, resolveUploadedFileUrl(overrideImage));
+        return next;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [conversationAvatarOverride?.imageSrc, conversationAvatarOverride?.room]);
   const pinnedByRoom = new Map(
     pinnedConversations.map((conversation) => [
       conversation.room,
@@ -236,17 +310,17 @@ export default function ChatSidebar({
     };
   }
 
-  const unreadConversationCount = chatItems.filter(
+  const unreadConversationCount = uniqueChatItems.filter(
     (chat) => Number(getChatSummary(chat).unreadCount) > 0,
   ).length;
-  const groupConversationCount = chatItems.filter((chat) => chat.group).length;
+  const groupConversationCount = uniqueChatItems.filter((chat) => chat.group).length;
   const archivedByRoom = new Set(
     archivedConversations.map((conversation) => conversation.room),
   );
   const originalChatIndexes = new Map(
-    chatItems.map((chat, index) => [chat.room, index]),
+    uniqueChatItems.map((chat, index) => [chat.room, index]),
   );
-  const filteredChatItems = chatItems
+  const filteredChatItems = uniqueChatItems
     .filter((chat) => {
       const roomSummary = getChatSummary(chat);
       const archived = archivedByRoom.has(chat.room);
@@ -443,9 +517,7 @@ export default function ChatSidebar({
                           </span>
                           <span className="min-w-0">
                             <span className="block truncate text-[14px] font-medium text-[#303238] dark:text-[#E8EAF0]">
-                              {result.type === "room"
-                                ? "Room"
-                                : result.name || result.username}
+                              {result.name || result.username}
                             </span>
                             <span className="block truncate text-[12px] text-[#92969D] dark:text-[#777E88]">
                               {result.relationshipStatus ||
@@ -474,9 +546,7 @@ export default function ChatSidebar({
                         className="block w-full rounded-xl px-3 py-2.5 text-left hover:bg-[#F4F4F2] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/30 dark:hover:bg-white/[0.06]"
                       >
                         <span className="block truncate text-[13px] font-medium text-[#303238] dark:text-[#E8EAF0]">
-                          {message.conversation?.type === "dm"
-                            ? message.conversation.name
-                            : "Room"}
+                          {message.conversation?.name || "Conversation"}
                         </span>
                         <span className="block truncate text-[12px] text-[#777C84] dark:text-[#AEB3BB]">
                           {message.message || message.attachment?.fileName || "Attachment"}
@@ -542,7 +612,10 @@ export default function ChatSidebar({
               key={chat.id}
               avatar={{
                 initials: chat.initials,
-                imageSrc: chat.imageSrc,
+                imageSrc:
+                  conversationAvatarOverride?.room === chat.room
+                    ? conversationAvatarOverride.imageSrc
+                    : persistedAvatarByRoom.get(chat.room) || chat.imageSrc,
                 tone: chat.tone,
                 group: chat.group,
               }}
@@ -566,7 +639,7 @@ export default function ChatSidebar({
         {!normalizedSearchQuery && conversationMenu && (
           <ConversationContextMenu
             menu={conversationMenu}
-            chatItems={chatItems}
+            chatItems={uniqueChatItems}
             pinned={pinnedByRoom.has(conversationMenu.room)}
             muted={isMuted(conversationMenu.room)}
             archived={archivedByRoom.has(conversationMenu.room)}
