@@ -198,7 +198,7 @@ export default function FriendsPage({
         : "You have no outgoing friend requests.";
 
   return (
-    <section className="col-start-2 flex min-h-0 min-w-0 flex-col bg-[#F7F7F5] dark:bg-[#111315] md:col-span-2">
+    <section className="col-start-1 flex min-h-0 min-w-0 flex-col bg-[#F7F7F5] dark:bg-[#111315] md:col-span-2 md:col-start-2">
       <header className="shrink-0 border-b border-[#E6E8E5] bg-white px-5 py-5 dark:border-white/[0.06] dark:bg-[#181A1F] sm:px-8">
         <div className="mx-auto flex max-w-[1050px] items-center justify-between">
           <div>

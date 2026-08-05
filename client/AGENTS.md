@@ -98,3 +98,9 @@ Maximum 8 lines.
 - Ask one concise question only when a required detail cannot be determined from the repository.
 - Do not ask for confirmation when the repository already provides the answer.
 - If blocked by missing backend support, report the exact missing contract instead of inventing one.
+## ChatPlaceholder Protection
+
+- Do not add new feature logic or substantial UI markup to `ChatPlaceholder.jsx`.
+- Treat it as an orchestration-only page.
+- New chat functionality must go into dedicated components, hooks, services, or utilities.
+- Changes to `ChatPlaceholder.jsx` should normally be limited to imports, hook usage, props, and composition.

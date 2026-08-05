@@ -91,6 +91,30 @@ input {
   }
 }
 
+@media (max-width: 767px) {
+  .mobile-section-next {
+    animation: mobile-section-next 180ms ease-out;
+  }
+
+  .mobile-section-previous {
+    animation: mobile-section-previous 180ms ease-out;
+  }
+}
+
+@keyframes mobile-section-next {
+  from {
+    opacity: 0.88;
+    transform: translateX(12px);
+  }
+}
+
+@keyframes mobile-section-previous {
+  from {
+    opacity: 0.88;
+    transform: translateX(-12px);
+  }
+}
+
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus {

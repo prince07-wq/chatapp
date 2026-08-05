@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
+import { useSearchParams } from "react-router-dom";
 import {
   Archive,
   ArchiveRestore,
@@ -48,23 +49,14 @@ import {
   deleteMessage as deleteMessageRequest,
 } from "../../api/messageApi.js";
 import {
-  getConversationPins,
   getConversationDeletions,
-  getConversationMutes,
-  getConversationArchives,
   getFriends,
   getOnlineUsers,
-  setConversationPin,
   setConversationDeletion,
-  setConversationMute,
-  setConversationArchive,
   searchChat as searchChatRequest,
 } from "../../api/userApi.js";
 import { getAccessToken } from "../../utils/tokenStorage.js";
-import {
-  loadNotificationPreferences,
-  saveNotificationPreferences,
-} from "../../utils/notificationPreferences.js";
+import { saveNotificationPreferences } from "../../utils/notificationPreferences.js";
 import {
   resolveUploadedFileUrl,
   uploadFile,
@@ -74,6 +66,7 @@ import {
   getNewestReactionState,
   isLaterMessage,
   latestMessageStatus,
+  MESSAGE_EDIT_WINDOW_MS,
   MESSAGE_STATUS_RANK,
   normalizeMessageReactions,
   normalizeSocketMessage,
@@ -83,6 +76,14 @@ import {
   getRoomPreview,
   isConversationMuted,
 } from "../../features/chat/utils/conversation.js";
+import useChatSocket from "../../features/chat/hooks/useChatSocket.js";
+import useConversationPreferences from "../../features/chat/hooks/useConversationPreferences.js";
+import useMessageActions from "../../features/chat/hooks/useMessageActions.js";
+import useMessageHistory from "../../features/chat/hooks/useMessageHistory.js";
+import usePresence from "../../features/chat/hooks/usePresence.js";
+import useTyping from "../../features/chat/hooks/useTyping.js";
+import useUnreadState from "../../features/chat/hooks/useUnreadState.js";
+import useVoiceRecorder from "../../features/chat/hooks/useVoiceRecorder.js";
 
 const INITIAL_ROOM = "test-room";
 const EMPTY_ROOM_SUMMARIES = Object.freeze({});
@@ -157,6 +158,20 @@ const navigationItems = [
   { label: "Profile", icon: User, section: "profile" },
   { label: "Settings", icon: Settings, section: "settings" },
 ];
+
+const mobileNavigationSections = [
+  "rooms",
+  "dms",
+  "friends",
+  "notifications",
+  "profile",
+];
+const routableSections = new Set([...mobileNavigationSections, "settings"]);
+const mobileNavigationItems = navigationItems.filter((item) =>
+  mobileNavigationSections.includes(item.section),
+);
+const swipeIgnoredTargets =
+  'button, input, textarea, select, audio, video, img, [role="dialog"], [role="menu"], [role="presentation"], [data-mobile-swipe-ignore]';
 
 const chats = [
   {
@@ -332,7 +347,7 @@ function NavigationRail({
   onLogout,
 }) {
   return (
-    <aside className="flex min-h-0 w-[76px] flex-col bg-[#17191D] text-white dark:bg-[#181A1F]">
+    <aside className="hidden min-h-0 w-[76px] flex-col bg-[#17191D] text-white dark:bg-[#181A1F] md:flex">
       <div className="flex h-[84px] shrink-0 items-center justify-center border-b border-white/[0.06]">
         <div className="flex h-11 w-11 items-center justify-center rounded-[14px] border border-white/[0.07] bg-white/[0.055]">
           <MessageSquare size={22} strokeWidth={2} />
@@ -388,6 +403,44 @@ function NavigationRail({
   );
 }
 
+function MobileNavigation({
+  activeSection,
+  incomingFriendCount,
+  unreadNotificationCount,
+  onSectionChange,
+}) {
+  return (
+    <nav
+      className="fixed inset-x-0 bottom-0 z-40 flex h-[calc(76px+env(safe-area-inset-bottom))] items-start justify-around border-t border-white/[0.06] bg-[#17191D] px-1.5 pt-2 text-white dark:bg-[#181A1F] md:hidden"
+      aria-label="Primary navigation"
+    >
+      {mobileNavigationItems.map((item) => (
+        <div key={item.section} className="flex min-w-0 flex-1 justify-center">
+          <NavigationItem
+            icon={item.icon}
+            label={item.label}
+            active={item.section === activeSection}
+            badge={
+              item.section === "friends"
+                ? incomingFriendCount || undefined
+                : item.section === "notifications"
+                  ? unreadNotificationCount || undefined
+                  : undefined
+            }
+            onClick={() =>
+              onSectionChange(
+                item.section,
+                "",
+                item.section === "rooms" || item.section === "dms",
+              )
+            }
+          />
+        </div>
+      ))}
+    </nav>
+  );
+}
+
 function ChatList({
   title = "Chats",
   chatItems = chats,
@@ -411,6 +464,7 @@ function ChatList({
   onOpenSearchConversation,
   onOpenSearchUser,
   onOpenSearchMessage,
+  mobileVisible = false,
 }) {
   const [activeFilter, setActiveFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -650,7 +704,7 @@ function ChatList({
     "border border-[#E5E6E3] text-[#646970] hover:border-[#D8DAD6] hover:bg-[#F7F7F5] focus-visible:ring-[#3B82F6]/30 dark:border-white/[0.08] dark:text-[#AEB3BB] dark:hover:bg-[#20242B]";
 
   return (
-    <section className="hidden min-h-0 min-w-0 flex-col border-r border-[#ECEDEA] bg-white dark:border-white/[0.06] dark:bg-[#181A1F] md:flex">
+    <section className={`${mobileVisible ? "flex" : "hidden"} min-h-0 min-w-0 flex-col border-r border-[#ECEDEA] bg-white dark:border-white/[0.06] dark:bg-[#181A1F] md:flex`}>
       <header className="shrink-0 px-5 pb-4 pt-5 xl:px-6">
         <div className="flex h-10 items-center justify-between">
           <div>
@@ -1109,6 +1163,7 @@ function ConversationMessages({
       ref={scrollContainerRef}
       onScroll={onScroll}
       className="min-h-0 flex-1 overflow-y-auto bg-[#F7F7F5] px-5 py-7 dark:bg-[#111315] sm:px-8 lg:px-10 xl:px-14"
+      data-mobile-swipe-ignore
     >
       <div className="relative mx-auto flex min-h-full max-w-[1100px] flex-col">
         {loadingOlderMessages && (
@@ -1218,10 +1273,12 @@ function ConversationPanel({
   onDeleteMessageForMe,
   onDeleteMessageForEveryone,
   highlightedMessageBackendId,
+  mobileVisible = true,
+  onBack,
 }) {
   if (!activeChat) {
     return (
-      <section className="relative col-start-2 flex min-h-0 min-w-0 flex-1 items-center justify-center bg-[#F7F7F5] dark:bg-[#111315] md:col-start-auto">
+      <section className={`relative col-start-1 ${mobileVisible ? "flex" : "hidden"} min-h-0 min-w-0 flex-1 items-center justify-center bg-[#F7F7F5] dark:bg-[#111315] md:col-start-auto md:flex`}>
         <p className="text-[14px] text-[#858A92] dark:text-[#9198A2]">
           Select a conversation to start chatting.
         </p>
@@ -1230,7 +1287,7 @@ function ConversationPanel({
   }
 
   return (
-    <section className="relative col-start-2 flex min-h-0 min-w-0 flex-col bg-[#F7F7F5] dark:bg-[#111315] md:col-start-auto">
+    <section className={`relative col-start-1 ${mobileVisible ? "flex" : "hidden"} min-h-0 min-w-0 flex-col bg-[#F7F7F5] dark:bg-[#111315] md:col-start-auto md:flex`}>
       <ConversationHeader
         avatar={{
           initials: activeChat.initials,
@@ -1241,6 +1298,7 @@ function ConversationPanel({
         name={activeChat.name}
         statusText={activeChatOnline ? "Online" : "Offline"}
         online={activeChatOnline}
+        onBack={onBack}
         headerActions={
           <>
             <IconButton label="Start a voice call" className="hidden sm:flex">
@@ -1303,8 +1361,14 @@ function ConversationPanel({
 
 export default function ChatPlaceholder() {
   const { user, logout, updateAuthenticatedUser } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loggingOut, setLoggingOut] = useState(false);
-  const [activeSection, setActiveSection] = useState("rooms");
+  const [activeSection, setActiveSection] = useState(() => {
+    const requestedSection = searchParams.get("section");
+    return routableSections.has(requestedSection) ? requestedSection : "rooms";
+  });
+  const [mobileTransition, setMobileTransition] = useState("");
+  const [showMobileChatList, setShowMobileChatList] = useState(false);
   const [activeRoom, setActiveRoom] = useState(INITIAL_ROOM);
   const [activeDmRecipientId, setActiveDmRecipientId] = useState(null);
   const [searchRoomChats, setSearchRoomChats] = useState([]);
@@ -1314,7 +1378,6 @@ export default function ChatPlaceholder() {
     () => new Set(),
   );
   const [activeProfileChat, setActiveProfileChat] = useState(null);
-  const [activeRoomMembers, setActiveRoomMembers] = useState([]);
   const [loadingDmUsers, setLoadingDmUsers] = useState(true);
   const [dmUsersError, setDmUsersError] = useState("");
   const [incomingFriendCount, setIncomingFriendCount] = useState(0);
@@ -1323,22 +1386,47 @@ export default function ChatPlaceholder() {
   const [friendsInitialTab, setFriendsInitialTab] = useState("friends");
   const [friendActivityNotifications, setFriendActivityNotifications] =
     useState([]);
-  const [readNotificationIds, setReadNotificationIds] = useState(
-    () => new Set(),
-  );
-  const [notificationPreferences, setNotificationPreferences] = useState(
-    loadNotificationPreferences,
-  );
-  const [pinnedConversations, setPinnedConversations] = useState([]);
-  const [deletedConversations, setDeletedConversations] = useState([]);
-  const [mutedConversations, setMutedConversations] = useState([]);
-  const [archivedConversations, setArchivedConversations] = useState([]);
-  const [muteConfirmation, setMuteConfirmation] = useState(null);
-  const [deleteConfirmation, setDeleteConfirmation] = useState(null);
-  const [deletingConversation, setDeletingConversation] = useState(false);
-  const [deleteConversationError, setDeleteConversationError] = useState("");
-  const [chatMessages, setChatMessages] = useState(messages);
-  const [roomSummaries, setRoomSummaries] = useState(() =>
+  const currentUserId = user?._id ?? user?.id;
+  const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
+  const activeRoomRef = useRef(INITIAL_ROOM);
+  const activeDmRecipientIdRef = useRef(null);
+  const {
+    notificationPreferences,
+    setNotificationPreferences,
+    pinnedConversations,
+    setPinnedConversations,
+    deletedConversations,
+    setDeletedConversations,
+    mutedConversations,
+    archivedConversations,
+    muteConfirmation,
+    setMuteConfirmation,
+    deleteConfirmation,
+    setDeleteConfirmation,
+    deletingConversation,
+    setDeletingConversation,
+    deleteConversationError,
+    setDeleteConversationError,
+    deletedConversationRoomsRef,
+    isMutedConversation,
+    handleToggleConversationPin,
+    handleRequestMuteConversation,
+    handleMuteDuration,
+    handleToggleConversationArchive,
+  } = useConversationPreferences({
+    currentUserId,
+    now: relativeTimeNow,
+  });
+  const {
+    roomSummaries,
+    setRoomSummaries,
+    readNotificationIds,
+    setReadNotificationIds,
+    pageVisible,
+    setPageVisible,
+    seenEmissionIdsRef,
+    pendingActiveRoomSeenRef,
+  } = useUnreadState(() =>
     Object.fromEntries(
       chats.map((chat) => [
         chat.room,
@@ -1348,70 +1436,88 @@ export default function ChatPlaceholder() {
         },
       ]),
     ),
+    INITIAL_ROOM,
   );
-  const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
-  const [messageValue, setMessageValue] = useState("");
-  const [editingMessage, setEditingMessage] = useState(null);
-  const [replyingTo, setReplyingTo] = useState(null);
-  const [reactionDetailsMessageId, setReactionDetailsMessageId] =
-    useState(null);
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [recordingState, setRecordingState] = useState("idle");
-  const [recordingDuration, setRecordingDuration] = useState(0);
-  const [attachmentError, setAttachmentError] = useState("");
-  const [sendingMessage, setSendingMessage] = useState(false);
-  const [typingSocketIds, setTypingSocketIds] = useState(() => new Set());
-  const [onlineUserKeys, setOnlineUserKeys] = useState(() => new Set());
-  const [activeRoomMemberSocketIds, setActiveRoomMemberSocketIds] = useState(
-    () => new Set(),
-  );
-  const [socketConnected, setSocketConnected] = useState(false);
-  const [pageVisible, setPageVisible] = useState(
-    () => typeof document === "undefined" || document.visibilityState === "visible",
-  );
-  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
-  const messagesEndRef = useRef(null);
-  const messagesScrollRef = useRef(null);
-  const socketRef = useRef(null);
-  const activeRoomRef = useRef(INITIAL_ROOM);
-  const activeDmRecipientIdRef = useRef(null);
-  const joinedRoomRef = useRef(null);
-  const typingTimeoutRef = useRef(null);
-  const typingRoomRef = useRef(null);
-  const isTypingRef = useRef(false);
-  const oldestPageRef = useRef(null);
-  const hasOlderMessagesRef = useRef(false);
-  const olderRequestInFlightRef = useRef(false);
-  const historyGenerationRef = useRef(0);
-  const isNearBottomRef = useRef(true);
-  const initialScrollPendingRef = useRef(false);
-  const prependScrollSnapshotRef = useRef(null);
-  const shouldAutoScrollNewMessageRef = useRef(false);
-  const wasTypingRef = useRef(false);
-  const seenEmissionIdsRef = useRef(new Set());
-  const receivedSocketMessageIdsRef = useRef(new Set());
-  const pendingActiveRoomSeenRef = useRef(INITIAL_ROOM);
-  const sendInFlightRef = useRef(false);
-  const mediaRecorderRef = useRef(null);
-  const mediaStreamRef = useRef(null);
-  const recordingTimerRef = useRef(null);
-  const recordingStartedAtRef = useRef(0);
-  const recordingSessionRef = useRef(0);
-  const voiceSendPendingRef = useRef(false);
-  const hiddenMessageIdsRef = useRef(new Set());
-  const deletedConversationRoomsRef = useRef(new Set());
+  const {
+    chatMessages,
+    setChatMessages,
+    loadingOlderMessages,
+    setLoadingOlderMessages,
+    messagesEndRef,
+    messagesScrollRef,
+    oldestPageRef,
+    hasOlderMessagesRef,
+    olderRequestInFlightRef,
+    historyGenerationRef,
+    isNearBottomRef,
+    initialScrollPendingRef,
+    prependScrollSnapshotRef,
+    shouldAutoScrollNewMessageRef,
+    wasTypingRef,
+    receivedSocketMessageIdsRef,
+  } = useMessageHistory(messages);
+  const {
+    messageValue,
+    setMessageValue,
+    editingMessage,
+    setEditingMessage,
+    replyingTo,
+    setReplyingTo,
+    reactionDetailsMessageId,
+    setReactionDetailsMessageId,
+    selectedFile,
+    setSelectedFile,
+    attachmentError,
+    setAttachmentError,
+    sendingMessage,
+    setSendingMessage,
+    sendInFlightRef,
+    hiddenMessageIdsRef,
+  } = useMessageActions();
+  const {
+    recordingState,
+    setRecordingState,
+    recordingDuration,
+    setRecordingDuration,
+    mediaRecorderRef,
+    mediaStreamRef,
+    recordingTimerRef,
+    recordingStartedAtRef,
+    recordingSessionRef,
+    voiceSendPendingRef,
+  } = useVoiceRecorder({
+    sendInFlightRef,
+    setAttachmentError,
+    setSelectedFile,
+    onSend: handleMessageSend,
+  });
+  const {
+    onlineUserKeys,
+    setOnlineUserKeys,
+    activeRoomMemberSocketIds,
+    setActiveRoomMemberSocketIds,
+    activeRoomMembers,
+    setActiveRoomMembers,
+  } = usePresence();
+  const { socketRef, joinedRoomRef, socketConnected, setSocketConnected } =
+    useChatSocket();
+  const {
+    typingSocketIds,
+    setTypingSocketIds,
+    typingRoomRef,
+    isTypingRef,
+    clearTypingTimeout,
+    stopTyping,
+    handleMessageChange,
+  } = useTyping({ socketRef, activeRoomRef, setMessageValue });
+  const layoutRef = useRef(null);
+  const touchGestureRef = useRef(null);
+  const sectionScrollPositionsRef = useRef(new Map());
+  const transitionTimeoutRef = useRef(null);
+  const syncedSearchSectionRef = useRef(activeSection);
 
   const profileName = user?.username || user?.email || "You";
   const profileInitials = profileName.slice(0, 2).toUpperCase();
-  const currentUserId = user?._id ?? user?.id;
-  const mutedConversationsByRoom = new Map(
-    mutedConversations.map((conversation) => [conversation.room, conversation]),
-  );
-  const isMutedConversation = (room) =>
-    isConversationMuted(
-      mutedConversationsByRoom.get(room),
-      relativeTimeNow,
-    );
   const deletedConversationRooms = new Set(
     deletedConversations.map((conversation) => conversation.room),
   );
@@ -1424,106 +1530,48 @@ export default function ChatPlaceholder() {
   }, [currentUserId]);
 
   useEffect(() => {
+    const requestedSection = searchParams.get("section");
+    if (
+      routableSections.has(requestedSection) &&
+      requestedSection !== syncedSearchSectionRef.current
+    ) {
+      syncedSearchSectionRef.current = requestedSection;
+      setActiveSection(requestedSection);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!routableSections.has(activeSection)) return;
+    if (searchParams.get("section") === activeSection) return;
+    syncedSearchSectionRef.current = activeSection;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("section", activeSection);
+    setSearchParams(nextParams, { replace: true });
+  }, [activeSection, searchParams, setSearchParams]);
+
+  useLayoutEffect(() => {
+    const savedScrollTop = sectionScrollPositionsRef.current.get(activeSection);
+    if (savedScrollTop == null || window.innerWidth >= 768) return undefined;
+
+    const frameId = window.requestAnimationFrame(() => {
+      const scrollContainer = Array.from(
+        layoutRef.current?.querySelectorAll(".overflow-y-auto") ?? [],
+      ).find((element) => element.offsetParent !== null);
+      if (scrollContainer) scrollContainer.scrollTop = savedScrollTop;
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activeSection]);
+
+  useEffect(
+    () => () => window.clearTimeout(transitionTimeoutRef.current),
+    [],
+  );
+
+  useEffect(() => {
     deletedConversationRoomsRef.current = new Set(
       deletedConversations.map((conversation) => conversation.room),
     );
   }, [deletedConversations]);
-
-  useEffect(() => {
-    if (!currentUserId) return undefined;
-
-    const controller = new AbortController();
-    getConversationPins({ signal: controller.signal })
-      .then((pins) => {
-        if (!controller.signal.aborted) setPinnedConversations(pins);
-      })
-      .catch((error) => {
-        if (error.code !== "ERR_CANCELED") {
-          console.error(
-            "[conversation-pins] load_error",
-            error.response?.data?.error ?? error.message,
-          );
-        }
-      });
-
-    return () => controller.abort();
-  }, [currentUserId]);
-
-  useEffect(() => {
-    if (!currentUserId) return undefined;
-
-    const controller = new AbortController();
-    getConversationArchives({ signal: controller.signal })
-      .then((conversations) => {
-        if (!controller.signal.aborted) setArchivedConversations(conversations);
-      })
-      .catch((error) => {
-        if (error.code !== "ERR_CANCELED") {
-          console.error(
-            "[conversation-archives] load_error",
-            error.response?.data?.error ?? error.message,
-          );
-        }
-      });
-
-    return () => controller.abort();
-  }, [currentUserId]);
-
-  useEffect(() => {
-    if (!currentUserId) return undefined;
-
-    const controller = new AbortController();
-    getConversationMutes({ signal: controller.signal })
-      .then((conversations) => {
-        if (!controller.signal.aborted) setMutedConversations(conversations);
-      })
-      .catch((error) => {
-        if (error.code !== "ERR_CANCELED") {
-          console.error(
-            "[conversation-mutes] load_error",
-            error.response?.data?.error ?? error.message,
-          );
-        }
-      });
-
-    return () => controller.abort();
-  }, [currentUserId]);
-
-  useEffect(() => {
-    const now = Date.now();
-    const nextExpiry = mutedConversations
-      .map((conversation) => new Date(conversation.mutedUntil).getTime())
-      .filter((mutedUntil) => Number.isFinite(mutedUntil) && mutedUntil > now)
-      .sort((first, second) => first - second)[0];
-    if (!nextExpiry) return undefined;
-
-    const timeout = setTimeout(() => {
-      const expiredRooms = mutedConversations
-        .filter(
-          (conversation) =>
-            conversation.mutedUntil &&
-            new Date(conversation.mutedUntil).getTime() <= Date.now(),
-        )
-        .map((conversation) => conversation.room);
-      if (expiredRooms.length === 0) return;
-
-      setMutedConversations((currentConversations) =>
-        currentConversations.filter(
-          (conversation) => !expiredRooms.includes(conversation.room),
-        ),
-      );
-      expiredRooms.forEach((room) => {
-        setConversationMute(room, false).catch((error) => {
-          console.error(
-            "[conversation-mutes] expiry_error",
-            error.response?.data?.error ?? error.message,
-          );
-        });
-      });
-    }, Math.max(0, nextExpiry - now) + 50);
-
-    return () => clearTimeout(timeout);
-  }, [mutedConversations]);
 
   useEffect(() => {
     if (!currentUserId) return undefined;
@@ -2868,54 +2916,6 @@ export default function ChatPlaceholder() {
     });
   }
 
-  function clearTypingTimeout() {
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = null;
-    }
-  }
-
-  function stopTyping() {
-    clearTypingTimeout();
-
-    if (!isTypingRef.current) return;
-
-    const socket = socketRef.current;
-    const room = typingRoomRef.current;
-
-    if (socket?.connected && room) {
-      socket.emit("typing_stop", { room });
-    }
-
-    isTypingRef.current = false;
-    typingRoomRef.current = null;
-  }
-
-  function handleMessageChange(event) {
-    const value = event.target.value;
-    setMessageValue(value);
-    clearTypingTimeout();
-
-    if (!value.trim()) {
-      stopTyping();
-      return;
-    }
-
-    const socket = socketRef.current;
-    const room = activeRoomRef.current;
-
-    if (!socket?.connected) return;
-
-    if (!isTypingRef.current || typingRoomRef.current !== room) {
-      stopTyping();
-      socket.emit("typing_start", { room });
-      isTypingRef.current = true;
-      typingRoomRef.current = room;
-    }
-
-    typingTimeoutRef.current = setTimeout(stopTyping, 700);
-  }
-
   async function loadOlderMessages() {
     const currentPage = oldestPageRef.current;
 
@@ -3260,13 +3260,6 @@ export default function ChatPlaceholder() {
     setAttachmentError("");
   }
 
-  useEffect(
-    () => () => {
-      cancelVoiceRecording({ updateState: false });
-    },
-    [],
-  );
-
   function handleChatSelect(chat, { preserveSearchTarget = false } = {}) {
     const room = chat?.room;
     const recipientId = chat?.recipientId ?? null;
@@ -3278,7 +3271,9 @@ export default function ChatPlaceholder() {
       return;
     }
 
-    if (!room || room === activeRoomRef.current) return;
+    if (!room) return;
+    setShowMobileChatList(false);
+    if (room === activeRoomRef.current) return;
 
     if (!preserveSearchTarget) setSearchMessageTarget(null);
 
@@ -3324,82 +3319,6 @@ export default function ChatPlaceholder() {
     cancelVoiceRecording();
     setSelectedFile(null);
     setAttachmentError("");
-  }
-
-  async function handleToggleConversationPin(room) {
-    if (!room) return;
-
-    const previousPins = pinnedConversations;
-    const isPinned = previousPins.some(
-      (conversation) => conversation.room === room,
-    );
-    setPinnedConversations(
-      isPinned
-        ? previousPins.filter((conversation) => conversation.room !== room)
-        : [{ room, pinnedAt: new Date().toISOString() }, ...previousPins],
-    );
-
-    try {
-      const savedPins = await setConversationPin(room, !isPinned);
-      setPinnedConversations(savedPins);
-    } catch (error) {
-      setPinnedConversations(previousPins);
-      console.error(
-        "[conversation-pins] update_error",
-        error.response?.data?.error ?? error.message,
-      );
-    }
-  }
-
-  async function handleRequestMuteConversation(chat) {
-    if (!chat?.room) return;
-    if (!isMutedConversation(chat.room)) {
-      setMuteConfirmation(chat);
-      return;
-    }
-
-    try {
-      setMutedConversations(await setConversationMute(chat.room, false));
-    } catch (error) {
-      console.error(
-        "[conversation-mutes] update_error",
-        error.response?.data?.error ?? error.message,
-      );
-    }
-  }
-
-  async function handleMuteDuration(duration) {
-    const chat = muteConfirmation;
-    if (!chat?.room) return;
-
-    try {
-      setMutedConversations(
-        await setConversationMute(chat.room, true, duration),
-      );
-      setMuteConfirmation(null);
-    } catch (error) {
-      console.error(
-        "[conversation-mutes] update_error",
-        error.response?.data?.error ?? error.message,
-      );
-    }
-  }
-
-  async function handleToggleConversationArchive(chat) {
-    if (!chat?.room) return;
-    const archived = archivedConversations.some(
-      (conversation) => conversation.room === chat.room,
-    );
-    try {
-      setArchivedConversations(
-        await setConversationArchive(chat.room, !archived),
-      );
-    } catch (error) {
-      console.error(
-        "[conversation-archives] update_error",
-        error.response?.data?.error ?? error.message,
-      );
-    }
   }
 
   function restoreDeletedConversation(room) {
@@ -3504,7 +3423,24 @@ export default function ChatPlaceholder() {
     }
   }
 
-  function handleSectionChange(section) {
+  function rememberMobileSectionScroll() {
+    if (window.innerWidth >= 768) return;
+    const scrollContainer = Array.from(
+      layoutRef.current?.querySelectorAll(".overflow-y-auto") ?? [],
+    ).find((element) => element.offsetParent !== null);
+    if (scrollContainer) {
+      sectionScrollPositionsRef.current.set(
+        activeSection,
+        scrollContainer.scrollTop,
+      );
+    }
+  }
+
+  function handleSectionChange(
+    section,
+    transitionDirection = "",
+    openMobileList = false,
+  ) {
     if (
       [
         "rooms",
@@ -3515,8 +3451,59 @@ export default function ChatPlaceholder() {
         "settings",
       ].includes(section)
     ) {
+      if (openMobileList && window.innerWidth < 768) {
+        setShowMobileChatList(true);
+      }
+      if (section === activeSection) return;
+      rememberMobileSectionScroll();
       if (section === "friends") setFriendsInitialTab("friends");
+      if (window.innerWidth < 768 && transitionDirection) {
+        window.clearTimeout(transitionTimeoutRef.current);
+        setMobileTransition(transitionDirection);
+        transitionTimeoutRef.current = window.setTimeout(
+          () => setMobileTransition(""),
+          180,
+        );
+      }
       setActiveSection(section);
+    }
+  }
+
+  function handleTouchStart(event) {
+    if (window.innerWidth >= 768 || event.touches.length !== 1) return;
+    if (event.target.closest(swipeIgnoredTargets)) return;
+    const touch = event.touches[0];
+    touchGestureRef.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      time: performance.now(),
+    };
+  }
+
+  function handleTouchEnd(event) {
+    const gesture = touchGestureRef.current;
+    touchGestureRef.current = null;
+    if (!gesture || event.changedTouches.length !== 1) return;
+
+    const touch = event.changedTouches[0];
+    const deltaX = touch.clientX - gesture.x;
+    const deltaY = touch.clientY - gesture.y;
+    const elapsed = Math.max(performance.now() - gesture.time, 1);
+    const velocity = Math.abs(deltaX) / elapsed;
+    const isHorizontal = Math.abs(deltaX) > Math.abs(deltaY) * 1.35;
+    const passesThreshold = Math.abs(deltaX) >= 64 || velocity >= 0.5;
+    if (!isHorizontal || !passesThreshold || Math.abs(deltaX) < 28) return;
+
+    const currentIndex = mobileNavigationSections.indexOf(activeSection);
+    if (currentIndex === -1) return;
+    const nextIndex = deltaX < 0 ? currentIndex + 1 : currentIndex - 1;
+    const nextSection = mobileNavigationSections[nextIndex];
+    if (nextSection) {
+      handleSectionChange(
+        nextSection,
+        deltaX < 0 ? "next" : "previous",
+        nextSection === "rooms" || nextSection === "dms",
+      );
     }
   }
 
@@ -3888,8 +3875,18 @@ export default function ChatPlaceholder() {
   }
 
   return (
-    <main className="h-screen min-h-[640px] overflow-hidden bg-[#F7F7F5] font-sans text-[#202226] dark:bg-[#111315] dark:text-[#F4F5F6]">
-      <div className="grid h-full grid-cols-[76px_minmax(0,1fr)] md:grid-cols-[76px_300px_minmax(0,1fr)] xl:grid-cols-[76px_390px_minmax(0,1fr)] 2xl:grid-cols-[76px_420px_minmax(0,1fr)]">
+    <main
+      className="h-[100dvh] min-h-0 overflow-x-hidden overflow-y-hidden bg-[#F7F7F5] pb-[calc(76px+env(safe-area-inset-bottom))] font-sans text-[#202226] dark:bg-[#111315] dark:text-[#F4F5F6] md:h-screen md:min-h-[640px] md:pb-0"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={() => {
+        touchGestureRef.current = null;
+      }}
+    >
+      <div
+        ref={layoutRef}
+        className={`grid h-full min-w-0 grid-cols-[minmax(0,1fr)] md:grid-cols-[76px_300px_minmax(0,1fr)] xl:grid-cols-[76px_390px_minmax(0,1fr)] 2xl:grid-cols-[76px_420px_minmax(0,1fr)] ${mobileTransition ? `mobile-section-${mobileTransition}` : ""}`}
+      >
         <NavigationRail
           activeSection={activeSection}
           incomingFriendCount={incomingFriendCount}
@@ -3918,6 +3915,7 @@ export default function ChatPlaceholder() {
             user={user}
             online={socketConnected}
             onProfileUpdated={updateAuthenticatedUser}
+            onOpenSettings={() => handleSectionChange("settings")}
           />
         ) : activeSection === "settings" ? (
           <SettingsPage
@@ -3951,6 +3949,7 @@ export default function ChatPlaceholder() {
               onOpenSearchConversation={handleOpenSearchConversation}
               onOpenSearchUser={handleOpenSearchUser}
               onOpenSearchMessage={handleOpenSearchMessage}
+              mobileVisible={showMobileChatList}
             />
             <ConversationPanel
               activeChat={activeChat}
@@ -3989,10 +3988,18 @@ export default function ChatPlaceholder() {
               onDeleteMessageForMe={handleDeleteMessageForMe}
               onDeleteMessageForEveryone={handleDeleteMessageForEveryone}
               highlightedMessageBackendId={searchMessageTarget?.messageId}
+              mobileVisible={!showMobileChatList}
+              onBack={() => setShowMobileChatList(true)}
             />
           </>
         )}
       </div>
+      <MobileNavigation
+        activeSection={activeSection}
+        incomingFriendCount={incomingFriendCount}
+        unreadNotificationCount={unreadNotificationCount}
+        onSectionChange={handleSectionChange}
+      />
       {reactionDetailsMessage && (
         <ReactionDetailsModal
           message={reactionDetailsMessage}

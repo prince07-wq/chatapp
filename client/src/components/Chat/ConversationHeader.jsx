@@ -1,4 +1,5 @@
 import Avatar from "./Avatar.jsx";
+import { ArrowLeft } from "lucide-react";
 
 function ConversationHeader({
   avatar,
@@ -6,9 +7,19 @@ function ConversationHeader({
   statusText,
   online = false,
   headerActions,
+  onBack,
 }) {
   return (
     <header className="relative flex h-[92px] shrink-0 items-center border-b border-[#E8E9E6] bg-white px-4 dark:border-white/[0.06] dark:bg-[#181A1F] lg:px-6">
+      <button
+        type="button"
+        onClick={onBack}
+        aria-label="Back to conversations"
+        className="flex h-10 w-10 items-center justify-center rounded-xl text-[#6F737B] transition-colors duration-200 hover:bg-black/[0.045] hover:text-[#202226] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/35 dark:text-[#9CA2AC] dark:hover:bg-white/[0.07] dark:hover:text-white md:hidden"
+      >
+        <ArrowLeft size={20} strokeWidth={1.9} />
+      </button>
+
       <div className="hidden items-center lg:flex">
         <Avatar {...avatar} size="lg" online={online} />
       </div>
