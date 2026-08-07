@@ -104,3 +104,9 @@ Maximum 8 lines.
 - Treat it as an orchestration-only page.
 - New chat functionality must go into dedicated components, hooks, services, or utilities.
 - Changes to `ChatPlaceholder.jsx` should normally be limited to imports, hook usage, props, and composition.
+## Task Size
+
+- Never implement more than one major feature in a single task.
+- If a requested feature naturally exceeds ~300–500 lines of changes or touches many unrelated files, stop and split it into smaller milestones.
+- Prefer several small commits over one large implementation.
+- If implementation time exceeds approximately 20–30 minutes or the diff grows unexpectedly, stop and report the proposed split instead of continuing.

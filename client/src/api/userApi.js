@@ -5,6 +5,16 @@ export async function getOnlineUsers({ signal } = {}) {
   return Array.isArray(data?.users) ? data.users : [];
 }
 
+export async function getDmConversations({ signal } = {}) {
+  const { data } = await api.get("/users/dm-conversations", { signal });
+  return Array.isArray(data?.dmConversations) ? data.dmConversations : [];
+}
+
+export async function ensureDmConversation(recipientId) {
+  const { data } = await api.post("/users/dm-conversations", { recipientId });
+  return data?.conversation ?? null;
+}
+
 export async function getConversationPins({ signal } = {}) {
   const { data } = await api.get("/users/conversation-pins", { signal });
   return Array.isArray(data?.pinnedConversations)

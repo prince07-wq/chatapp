@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { resolveUploadedFileUrl } from "../../../api/fileApi.js";
+import { dedupeRequest } from "../../../api/requestDedup.js";
 
 import {
   addRoomMembers,
@@ -32,44 +33,35 @@ export default function useConversationDetails(chat, { refreshKey } = {}) {
   const pendingRef = useRef(false);
 
   useEffect(() => {
-    if (!room) return undefined;
-    const controller = new AbortController();
-    getConversationDetails(room, { signal: controller.signal })
-      .then((savedDetails) => {
-        if (!controller.signal.aborted) setDetails(savedDetails);
-      })
-      .catch((requestError) => {
-        if (requestError.code !== "ERR_CANCELED" && !controller.signal.aborted) {
-          setError(errorMessage(requestError));
-        }
-      });
-    return () => controller.abort();
-  }, [room, refreshKey]);
-
-  useEffect(() => {
     if (!open || !room) return undefined;
-    const controller = new AbortController();
+    let cancelled = false;
     Promise.all([
-      getConversationDetails(room, { signal: controller.signal }),
-      getConversationMedia(room, 1, { signal: controller.signal }),
+      dedupeRequest(
+        `conversation-details:${room}`,
+        () => getConversationDetails(room),
+      ),
+      dedupeRequest(
+        `conversation-media:${room}:1`,
+        () => getConversationMedia(room, 1),
+      ),
     ])
       .then(([savedDetails, savedMedia]) => {
-        if (controller.signal.aborted) return;
+        if (cancelled) return;
         setDetails(savedDetails);
         setMedia(savedMedia.items);
         setMediaPage(1);
         setMediaHasMore(savedMedia.hasMore);
       })
       .catch((requestError) => {
-        if (requestError.code !== "ERR_CANCELED" && !controller.signal.aborted) {
+        if (!cancelled) {
           setError(errorMessage(requestError));
         }
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!cancelled) setLoading(false);
       });
-    return () => controller.abort();
-  }, [open, room]);
+    return () => { cancelled = true; };
+  }, [open, refreshKey, room]);
 
   async function run(action, request, message) {
     if (pendingRef.current || !room) return { ok: false };

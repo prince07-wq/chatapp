@@ -1,5 +1,22 @@
 import { formatRelativeTime } from "./message.js";
 
+export function getDmRoomId(userIdA, userIdB) {
+  if (userIdA == null || userIdB == null) return null;
+  const ids = [String(userIdA), String(userIdB)];
+  if (!ids[0] || !ids[1] || ids[0] === ids[1]) return null;
+  return ids.sort().join("_");
+}
+
+export function getUserInitials(username) {
+  return String(username || "User")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
 export function getRoomPreview(chat, roomSummary, now) {
   const latestMessage = roomSummary?.latestMessage;
   const latestReaction = roomSummary?.latestReaction;
@@ -9,7 +26,12 @@ export function getRoomPreview(chat, roomSummary, now) {
   if (latestReaction && (Number.isNaN(latestMessageTime) || latestReactionTime > latestMessageTime)) {
     return { preview: `${latestReaction.emoji} Reacted to your message`, time: formatRelativeTime(latestReaction.createdAt, now) };
   }
-  if (!latestMessage) return { preview: "Start a conversation", time: "" };
+  if (!latestMessage) {
+    return {
+      preview: chat?.preview || "Start a conversation",
+      time: chat?.time || "",
+    };
+  }
 
   const relativeTime = formatRelativeTime(latestMessage.createdAt, now);
   if (latestMessage.direction === "outgoing") {

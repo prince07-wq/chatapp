@@ -6,7 +6,6 @@ import UserListItem from "../../../components/Chat/UserListItem.jsx";
 import ThemeToggle from "../../../components/UI/ThemeToggle.jsx";
 import { resolveUploadedFileUrl } from "../../../api/fileApi.js";
 import { searchChat as searchChatRequest } from "../../../api/userApi.js";
-import { getConversationDetails } from "../../conversation-details/api/conversationDetailsApi.js";
 import { getConversationActivityTime, getRoomPreview, isConversationMuted } from "../utils/conversation.js";
 import ConversationContextMenu from "./ConversationContextMenu.jsx";
 
@@ -81,33 +80,9 @@ export default function ChatSidebar({
   const uniqueChatItems = Array.from(
     new Map(chatItems.map((chat) => [chat.room, chat])).values(),
   );
-  const roomKey = uniqueChatItems.map((chat) => chat.room).sort().join("\u0000");
   const chatAvatarKey = JSON.stringify(
     uniqueChatItems.map((chat) => [chat.room, chat.imageSrc || ""]),
   );
-
-  useEffect(() => {
-    if (!roomKey) return undefined;
-    const controller = new AbortController();
-    const rooms = roomKey.split("\u0000");
-    Promise.allSettled(
-      rooms.map((room) =>
-        getConversationDetails(room, { signal: controller.signal }),
-      ),
-    ).then((results) => {
-      if (controller.signal.aborted) return;
-      const savedAvatars = new Map();
-      results.forEach((result, index) => {
-        if (result.status !== "fulfilled") return;
-        const avatar = result.value.type === "room"
-          ? result.value.avatar
-          : result.value.recipient?.profileImage;
-        if (avatar) savedAvatars.set(rooms[index], resolveUploadedFileUrl(avatar));
-      });
-      setPersistedAvatarByRoom(savedAvatars);
-    });
-    return () => controller.abort();
-  }, [roomKey]);
 
   useEffect(() => {
     const avatarEntries = JSON.parse(chatAvatarKey).filter(([, imageSrc]) => imageSrc);

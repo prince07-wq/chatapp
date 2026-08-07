@@ -1,4 +1,7 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+"use no memo";
+
+import { useEffect, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 import MessageBubble from "../../../components/Chat/MessageBubble.jsx";
 import { canEditMessage, MESSAGE_EDIT_WINDOW_MS } from "../utils/message.js";
@@ -22,6 +25,15 @@ export default function MessageList({
   const [editEligibilityTime, setEditEligibilityTime] = useState(() => Date.now());
   const [highlightedMessageId, setHighlightedMessageId] = useState(null);
   const highlightTimeoutRef = useRef(null);
+  // TanStack Virtual intentionally owns mutable measurement state and opts this renderer out of compiler memoization.
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const messageVirtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => 88,
+    getItemKey: (index) => messages[index].id,
+    overscan: 8,
+  });
 
   useEffect(
     () => () => window.clearTimeout(highlightTimeoutRef.current),
@@ -36,19 +48,18 @@ export default function MessageList({
     );
     if (!message) return;
 
-    const element = Array.from(
-      scrollContainerRef.current?.querySelectorAll("[data-message-id]") || [],
-    ).find((candidate) => candidate.dataset.messageId === message.id);
-    if (!element) return;
-
-    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    const messageIndex = messages.indexOf(message);
+    messageVirtualizer.scrollToIndex(messageIndex, {
+      align: "center",
+      behavior: "smooth",
+    });
     setHighlightedMessageId(message.id);
     window.clearTimeout(highlightTimeoutRef.current);
     highlightTimeoutRef.current = window.setTimeout(
       () => setHighlightedMessageId(null),
       1400,
     );
-  }, [highlightedMessageBackendId, messages, scrollContainerRef]);
+  }, [highlightedMessageBackendId, messageVirtualizer, messages]);
 
   useEffect(() => {
     const now = Date.now();
@@ -79,12 +90,11 @@ export default function MessageList({
     );
     if (!original) return false;
 
-    const element = Array.from(
-      scrollContainerRef.current?.querySelectorAll("[data-message-id]") || [],
-    ).find((candidate) => candidate.dataset.messageId === original.id);
-    if (!element) return false;
-
-    element.scrollIntoView({ behavior: "smooth", block: "center" });
+    const messageIndex = messages.indexOf(original);
+    messageVirtualizer.scrollToIndex(messageIndex, {
+      align: "center",
+      behavior: "smooth",
+    });
     setHighlightedMessageId(original.id);
     window.clearTimeout(highlightTimeoutRef.current);
     highlightTimeoutRef.current = window.setTimeout(
@@ -134,56 +144,73 @@ export default function MessageList({
         </div>
 
         <div className="mt-7 flex flex-1 flex-col justify-center pb-4">
-          {messages.map((message, index) => (
-            <Fragment key={message.id}>
-              <MessageBubble
-                messageId={message.id}
-                text={message.text}
-                attachment={message.attachment}
-                replyTo={message.replyTo}
-                reactions={message.reactions}
-                currentUserId={currentUserId}
-                senderType={
-                  message.direction === "outgoing" ? "sent" : "received"
-                }
-                timestamp={message.time}
-                deliveryStatus={
-                  message.direction === "outgoing"
-                    ? message.status ?? (message.read ? "seen" : undefined)
-                    : undefined
-                }
-                edited={message.edited}
-                breakBefore={message.breakBefore}
-                highlighted={highlightedMessageId === message.id}
-                onReact={
-                  message.backendId
-                    ? (emoji) => onReactMessage(message, emoji)
-                    : undefined
-                }
-                onOpenReactionDetails={() => onOpenReactionDetails(message)}
-                onReply={
-                  message.backendId ? () => onReplyMessage(message) : undefined
-                }
-                onReplyQuoteClick={handleReplyQuoteClick}
-                onEdit={
-                  canEditMessage(message, eligibilityNow)
-                    ? () => onEditMessage(message)
-                    : undefined
-                }
-                onDeleteForMe={
-                  message.direction === "outgoing" && message.backendId
-                    ? () => onDeleteMessageForMe(message)
-                    : undefined
-                }
-                onDeleteForEveryone={
-                  message.direction === "outgoing" && message.backendId
-                    ? () => onDeleteMessageForEveryone(message)
-                    : undefined
-                }
-              />
-              {index === messages.length - 1 && renderTypingIndicator()}
-            </Fragment>
-          ))}
+          <div
+            className="relative shrink-0"
+            style={{ height: messageVirtualizer.getTotalSize() }}
+          >
+            {messageVirtualizer.getVirtualItems().map((virtualRow) => {
+              const message = messages[virtualRow.index];
+              return (
+                <div
+                  key={message.id}
+                  ref={messageVirtualizer.measureElement}
+                  data-index={virtualRow.index}
+                  className="absolute left-0 top-0 flow-root w-full"
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  <MessageBubble
+                    messageId={message.id}
+                    text={message.text}
+                    attachment={message.attachment}
+                    replyTo={message.replyTo}
+                    reactions={message.reactions}
+                    currentUserId={currentUserId}
+                    senderType={
+                      message.direction === "outgoing" ? "sent" : "received"
+                    }
+                    timestamp={message.time}
+                    deliveryStatus={
+                      message.direction === "outgoing"
+                        ? message.status ?? (message.read ? "seen" : undefined)
+                        : undefined
+                    }
+                    edited={message.edited}
+                    breakBefore={message.breakBefore}
+                    highlighted={highlightedMessageId === message.id}
+                    onReact={
+                      message.backendId
+                        ? (emoji) => onReactMessage(message, emoji)
+                        : undefined
+                    }
+                    onOpenReactionDetails={() => onOpenReactionDetails(message)}
+                    onReply={
+                      message.backendId
+                        ? () => onReplyMessage(message)
+                        : undefined
+                    }
+                    onReplyQuoteClick={handleReplyQuoteClick}
+                    onEdit={
+                      canEditMessage(message, eligibilityNow)
+                        ? () => onEditMessage(message)
+                        : undefined
+                    }
+                    onDeleteForMe={
+                      message.direction === "outgoing" && message.backendId
+                        ? () => onDeleteMessageForMe(message)
+                        : undefined
+                    }
+                    onDeleteForEveryone={
+                      message.direction === "outgoing" && message.backendId
+                        ? () => onDeleteMessageForEveryone(message)
+                        : undefined
+                    }
+                  />
+                  {virtualRow.index === messages.length - 1 &&
+                    renderTypingIndicator()}
+                </div>
+              );
+            })}
+          </div>
           {messages.length === 0 && renderTypingIndicator()}
           <div ref={messagesEndRef} />
         </div>
