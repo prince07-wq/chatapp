@@ -5,12 +5,12 @@ function presenceNameKey(username) {
   return username ? `name:${username.trim().toLowerCase()}` : null;
 }
 
-export default function usePresenceSocketEvents({ chat, currentUserId }) {
+export default function usePresenceSocketEvents({ chat, currentUserId, transport }) {
   function handleTypingStart({ room, socketId } = {}) {
     if (
       String(room) !== chat.activeRoomRef.current ||
       !socketId ||
-      socketId === chat.socketRef.current?.id
+      socketId === transport.getConnectionId()
     ) return;
     chat.setTypingSocketIds((ids) => new Set(ids).add(socketId));
   }
@@ -27,13 +27,13 @@ export default function usePresenceSocketEvents({ chat, currentUserId }) {
 
   function handleRoomJoined({ room } = {}) {
     if (String(room) === chat.activeRoomRef.current) {
-      chat.socketRef.current?.emit("request_members", { room });
+      transport.emit("request_members", { room });
     }
   }
 
   function handleRoomMembers({ room, members = [] } = {}) {
     if (String(room) !== chat.activeRoomRef.current) return;
-    const socketId = chat.socketRef.current?.id;
+    const socketId = transport.getConnectionId();
     const others = members.filter(
       (member) =>
         member.socketId !== socketId &&
@@ -47,7 +47,7 @@ export default function usePresenceSocketEvents({ chat, currentUserId }) {
     if (
       String(room) !== chat.activeRoomRef.current ||
       !socketId ||
-      socketId === chat.socketRef.current?.id
+      socketId === transport.getConnectionId()
     ) return;
     chat.setActiveRoomMemberSocketIds((ids) => new Set(ids).add(socketId));
     if (userId != null && String(userId) !== String(currentUserId)) {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { resolveUploadedFileUrl } from "../../../api/fileApi.js";
 import { useAuth } from "../../../context/AuthContext.jsx";
+import TransportManager from "../../../transports/TransportManager.js";
 import useChatBootstrap from "./useChatBootstrap.js";
 import useChatDerivedState from "./useChatDerivedState.js";
 import useChatState from "./useChatState.js";
@@ -19,13 +20,15 @@ export default function useChatController() {
   const { user, logout, updateAuthenticatedUser } = useAuth();
   const currentUserId = user?._id ?? user?.id;
   const [loggingOut, setLoggingOut] = useState(false);
-  const chat = useChatState({ currentUserId });
-  const navigation = usePageNavigation({ chat, currentUserId });
-  const unread = useUnreadCoordinator({ chat, currentUserId });
+  const [transport] = useState(() => new TransportManager());
+  const chat = useChatState({ currentUserId, transport });
+  const navigation = usePageNavigation({ chat, currentUserId, transport });
+  const unread = useUnreadCoordinator({ chat, currentUserId, transport });
   const voiceRef = useRef(null);
   const messageCoordinator = useMessageCoordinator({
     chat,
     currentUserId,
+    transport,
     unread,
     voiceRef,
   });
@@ -41,6 +44,7 @@ export default function useChatController() {
   const selection = useConversationSelection({
     chat,
     currentUserId,
+    transport,
     setActiveSection: navigation.setActiveSection,
     setShowMobileChatList: navigation.setShowMobileChatList,
     unread,
@@ -61,11 +65,12 @@ export default function useChatController() {
     selection,
     unread,
   });
-  const presenceEvents = usePresenceSocketEvents({ chat, currentUserId });
+  const presenceEvents = usePresenceSocketEvents({ chat, currentUserId, transport });
   useSocketLifecycle({
     chat,
     currentUserId,
     events: { ...messageEvents, ...presenceEvents },
+    transport,
   });
 
   async function handleLogout() {

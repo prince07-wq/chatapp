@@ -11,6 +11,7 @@ import { getDmRoomId, getUserInitials } from "../utils/conversation.js";
 export default function useConversationSelection({
   chat,
   currentUserId,
+  transport,
   setActiveSection,
   setShowMobileChatList,
   unread,
@@ -53,15 +54,14 @@ export default function useConversationSelection({
     chat.isNearBottomRef.current = true;
     chat.setLoadingOlderMessages(false);
 
-    const socket = chat.socketRef.current;
-    if (socket?.connected && chat.joinedRoomRef.current) {
-      socket.emit("leave_room", { room: chat.joinedRoomRef.current });
+    if (transport.getStatus() === "connected" && chat.joinedRoomRef.current) {
+      transport.leaveConversation(chat.joinedRoomRef.current);
       chat.joinedRoomRef.current = null;
     }
     chat.activeRoomRef.current = room;
     chat.activeDmRecipientIdRef.current = recipientId;
-    if (socket?.connected) {
-      socket.emit("join_room", { room });
+    if (transport.getStatus() === "connected") {
+      transport.joinConversation(room);
       chat.joinedRoomRef.current = room;
     }
     chat.setActiveRoom(room);
@@ -108,9 +108,8 @@ export default function useConversationSelection({
     if (chat.activeProfileChat?.room === room) chat.setActiveProfileChat(null);
     if (chat.activeRoomRef.current !== room) return;
     chat.stopTyping();
-    const socket = chat.socketRef.current;
-    if (socket?.connected && chat.joinedRoomRef.current === room) {
-      socket.emit("leave_room", { room });
+    if (transport.getStatus() === "connected" && chat.joinedRoomRef.current === room) {
+      transport.leaveConversation(room);
       chat.joinedRoomRef.current = null;
     }
     chat.activeRoomRef.current = null;
@@ -234,7 +233,7 @@ export default function useConversationSelection({
     const conversation = notification.chat;
     if (!conversation?.room) return;
     if (conversation.room === chat.activeRoomRef.current) {
-      chat.socketRef.current?.emit("mark_seen", { room: conversation.room });
+      transport.emit("mark_seen", { room: conversation.room });
       unread.clearRoomUnread(conversation.room);
     }
     if (notification.type === "dm_message") handleMessageUser(conversation);

@@ -2,9 +2,13 @@ import { deleteMessage, editMessage } from "../../../api/messageApi.js";
 import { uploadFile } from "../../../api/fileApi.js";
 import { ALLOWED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE } from "../constants/chatConfig.js";
 import { saveHiddenMessageIds } from "../utils/hiddenMessages.js";
-import { canEditMessage, normalizeSocketMessage } from "../utils/message.js";
+import {
+  canEditMessage,
+  normalizeSocketMessage,
+  updateReactionForUser,
+} from "../utils/message.js";
 
-export default function useMessageCoordinator({ chat, currentUserId, unread, voiceRef }) {
+export default function useMessageCoordinator({ chat, currentUserId, transport, unread, voiceRef }) {
   function cancelVoiceRecording() {
     voiceRef.current?.cancelVoiceRecording();
   }
@@ -95,13 +99,36 @@ export default function useMessageCoordinator({ chat, currentUserId, unread, voi
   }
 
   function handleReactToMessage(message, emoji, action = "set") {
-    const socket = chat.socketRef.current;
-    if (!socket?.connected || !message?.backendId || !message.room) {
+    if (transport.getStatus() !== "connected" || !message?.backendId || !message.room) {
       chat.setAttachmentError("Unable to react while disconnected.");
       return;
     }
     chat.setAttachmentError("");
-    socket.emit("toggle_message_reaction", {
+    const applyReaction = (candidate) =>
+      candidate?.id === message.id
+        ? {
+            ...candidate,
+            reactions: updateReactionForUser(
+              candidate.reactions,
+              currentUserId,
+              emoji,
+              action,
+            ),
+          }
+        : candidate;
+    chat.setChatMessages((current) => current.map(applyReaction));
+    chat.setRoomSummaries((summaries) => {
+      const summary = summaries[message.room];
+      if (summary?.latestMessage?.id !== message.id) return summaries;
+      return {
+        ...summaries,
+        [message.room]: {
+          ...summary,
+          latestMessage: applyReaction(summary.latestMessage),
+        },
+      };
+    });
+    transport.emit("toggle_message_reaction", {
       room: message.room,
       messageId: message.backendId,
       emoji,
@@ -137,7 +164,6 @@ export default function useMessageCoordinator({ chat, currentUserId, unread, voi
 
   async function handleMessageSend(value, options = {}) {
     const text = value?.trim();
-    const socket = chat.socketRef.current;
     const file = options.file ?? chat.selectedFile;
     const voice = options.voice === true;
     if ((!text && !file) || chat.sendInFlightRef.current) return;
@@ -167,7 +193,7 @@ export default function useMessageCoordinator({ chat, currentUserId, unread, voi
       return;
     }
 
-    if (!socket?.connected) {
+    if (transport.getStatus() !== "connected") {
       if (voice) cancelVoiceRecording();
       chat.setAttachmentError("Unable to send while disconnected.");
       return;
@@ -188,7 +214,7 @@ export default function useMessageCoordinator({ chat, currentUserId, unread, voi
           mimeType: uploaded.mimeType,
         };
       }
-      if (!socket.connected || chat.activeRoomRef.current !== room) {
+      if (transport.getStatus() !== "connected" || chat.activeRoomRef.current !== room) {
         throw new Error("The active room changed before the message was sent.");
       }
       const recipientId = chat.activeDmRecipientIdRef.current;
@@ -196,7 +222,7 @@ export default function useMessageCoordinator({ chat, currentUserId, unread, voi
       const payload = recipientId
         ? { recipientId, ...(text ? { message: text } : {}), ...(attachment ? { attachment } : {}), ...(replyToMessageId ? { replyToMessageId } : {}) }
         : { room, ...(text ? { message: text } : {}), ...(attachment ? { attachment } : {}), ...(replyToMessageId ? { replyToMessageId } : {}) };
-      socket.emit(recipientId ? "send_private_message" : "send_message", payload);
+      transport.emit(recipientId ? "send_private_message" : "send_message", payload);
       chat.setMessageValue("");
       chat.setSelectedFile(null);
       chat.setReplyingTo(null);

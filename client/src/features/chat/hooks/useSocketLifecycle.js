@@ -1,6 +1,5 @@
-/* eslint-disable react-hooks/exhaustive-deps, react-hooks/immutability */
+/* eslint-disable react-hooks/exhaustive-deps */
 import { useEffect, useRef } from "react";
-import TransportManager from "../../../transports/TransportManager.js";
 
 import { getOnlineUsers } from "../../../api/userApi.js";
 import { dedupeRequest } from "../../../api/requestDedup.js";
@@ -14,6 +13,7 @@ export default function useSocketLifecycle({
   chat,
   currentUserId,
   events,
+  transport,
 }) {
   const eventsRef = useRef(events);
   useEffect(() => {
@@ -28,17 +28,16 @@ export default function useSocketLifecycle({
       return undefined;
     }
 
-    const transport = new TransportManager();
-const socket = transport.connect({
-  url: socketUrl,
-  auth: { token },
-});
-    chat.socketRef.current = socket;
+    let active = true;
+    transport.connect({
+      url: socketUrl,
+      auth: { token },
+    });
     const registrations = [];
     const register = (eventName, handler) => {
-  transport.on(eventName, handler);
-  registrations.push([eventName, handler]);
-};
+      transport.on(eventName, handler);
+      registrations.push([eventName, handler]);
+    };
 
     function handleConnect() {
       const room = chat.activeRoomRef.current;
@@ -52,7 +51,7 @@ const socket = transport.connect({
         () => getOnlineUsers(),
       )
         .then((users) => {
-          if (chat.socketRef.current !== socket) return;
+          if (!active) return;
           const peers = users
             .filter((peer) => peer?.userId != null && String(peer.userId) !== String(currentUserId))
             .map((peer) => ({
@@ -87,7 +86,7 @@ const socket = transport.connect({
       chat.setOnlineUserKeys(new Set());
       chat.setActiveRoomMemberSocketIds(new Set());
       chat.setActiveRoomMembers([]);
-      if (reason === "io server disconnect") socket.connect();
+      if (reason === "io server disconnect") transport.reconnect();
     }
 
     function handleSocketError(error) {
@@ -104,24 +103,21 @@ const socket = transport.connect({
       register(eventName, (...args) => eventsRef.current[eventName]?.(...args));
     });
 
- return () => {
-  chat.stopTyping();
+    return () => {
+      active = false;
+      chat.stopTyping();
 
-  if (socket.connected && chat.joinedRoomRef.current) {
-    transport.leaveConversation(chat.joinedRoomRef.current);
-  }
+      if (transport.getStatus() === "connected" && chat.joinedRoomRef.current) {
+        transport.leaveConversation(chat.joinedRoomRef.current);
+      }
 
-  registrations.forEach(([eventName, handler]) => {
-    transport.off(eventName, handler);
-  });
+      registrations.forEach(([eventName, handler]) => {
+        transport.off(eventName, handler);
+      });
 
-  transport.disconnect();
+      transport.disconnect();
 
-  if (chat.socketRef.current === socket) {
-    chat.socketRef.current = null;
-  }
-
-  chat.joinedRoomRef.current = null;
-};
-}, [currentUserId]);
+      chat.joinedRoomRef.current = null;
+    };
+  }, [currentUserId]);
 }

@@ -7,7 +7,7 @@ import {
   latestMessageStatus,
 } from "../utils/message.js";
 
-export default function useUnreadCoordinator({ chat, currentUserId }) {
+export default function useUnreadCoordinator({ chat, currentUserId, transport }) {
   function updateRoomLatestMessage(message) {
     if (!message?.room) return;
     chat.setRoomSummaries((currentSummaries) => {
@@ -62,12 +62,11 @@ export default function useUnreadCoordinator({ chat, currentUserId }) {
   }
 
   function markVisibleMessagesSeen() {
-    const socket = chat.socketRef.current;
     const container = chat.messagesScrollRef.current;
     if (
       !chat.pageVisible ||
       !chat.socketConnected ||
-      !socket?.connected ||
+      transport.getStatus() !== "connected" ||
       !container ||
       chat.joinedRoomRef.current !== chat.activeRoom
     ) return;
@@ -101,7 +100,7 @@ export default function useUnreadCoordinator({ chat, currentUserId }) {
     });
     if (unseenIds.length === 0) return;
     unseenIds.forEach((messageId) => chat.seenEmissionIdsRef.current.add(messageId));
-    socket.emit("mark_seen", { room: chat.activeRoom });
+    transport.emit("mark_seen", { room: chat.activeRoom });
   }
 
   useEffect(() => {
@@ -119,17 +118,16 @@ export default function useUnreadCoordinator({ chat, currentUserId }) {
 
   useEffect(() => {
     const room = chat.pendingActiveRoomSeenRef.current;
-    const socket = chat.socketRef.current;
     if (
       room !== chat.activeRoom ||
       !chat.socketConnected ||
-      !socket?.connected ||
+      transport.getStatus() !== "connected" ||
       chat.joinedRoomRef.current !== room
     ) return;
     const count = Math.max(0, Number(chat.roomSummaries?.[room]?.unreadCount) || 0);
     chat.pendingActiveRoomSeenRef.current = null;
     if (count > 0) {
-      socket.emit("mark_seen", { room });
+      transport.emit("mark_seen", { room });
       clearRoomUnread(room);
     }
   }, [chat.activeRoom, chat.roomSummaries, chat.socketConnected]);

@@ -9,7 +9,7 @@ import usePresence from "./usePresence.js";
 import useTyping from "./useTyping.js";
 import useUnreadState from "./useUnreadState.js";
 
-export default function useChatState({ currentUserId }) {
+export default function useChatState({ currentUserId, transport }) {
   const [activeRoom, setActiveRoom] = useState(INITIAL_ROOM);
   const [activeDmRecipientId, setActiveDmRecipientId] = useState(null);
   const [searchRoomChats, setSearchRoomChats] = useState([]);
@@ -51,11 +51,11 @@ export default function useChatState({ currentUserId }) {
   const history = useMessageHistory(messages);
   const messageActions = useMessageActions();
   const presence = usePresence();
-  const socket = useChatSocket();
+  const connection = useChatSocket();
   const typing = useTyping({
-    socketRef: socket.socketRef,
     activeRoomRef,
     setMessageValue: messageActions.setMessageValue,
+    transport,
   });
 
   return {
@@ -96,7 +96,7 @@ export default function useChatState({ currentUserId }) {
     ...history,
     ...messageActions,
     ...presence,
-    ...socket,
+    ...connection,
     ...typing,
   };
 }

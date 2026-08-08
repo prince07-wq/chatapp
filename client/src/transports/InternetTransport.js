@@ -25,6 +25,10 @@ export default class InternetTransport {
     this.socket?.disconnect();
   }
 
+  reconnect() {
+    this.socket?.connect();
+  }
+
   emit(event, payload) {
     this.socket?.emit(event, payload);
   }
@@ -39,6 +43,10 @@ export default class InternetTransport {
 
   getStatus() {
     return this.socket?.connected ? "connected" : "disconnected";
+  }
+
+  getConnectionId() {
+    return this.socket?.id ?? null;
   }
 
   joinConversation(room) {

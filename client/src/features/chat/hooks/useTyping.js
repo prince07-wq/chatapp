@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 
-export default function useTyping({ socketRef, activeRoomRef, setMessageValue }) {
+export default function useTyping({ activeRoomRef, setMessageValue, transport }) {
   const [typingSocketIds, setTypingSocketIds] = useState(() => new Set());
   const typingTimeoutRef = useRef(null);
   const typingRoomRef = useRef(null);
@@ -17,9 +17,10 @@ export default function useTyping({ socketRef, activeRoomRef, setMessageValue })
     clearTypingTimeout();
     if (!isTypingRef.current) return;
 
-    const socket = socketRef.current;
     const room = typingRoomRef.current;
-    if (socket?.connected && room) socket.emit("typing_stop", { room });
+    if (transport.getStatus() === "connected" && room) {
+      transport.emit("typing_stop", { room });
+    }
 
     isTypingRef.current = false;
     typingRoomRef.current = null;
@@ -35,13 +36,12 @@ export default function useTyping({ socketRef, activeRoomRef, setMessageValue })
       return;
     }
 
-    const socket = socketRef.current;
     const room = activeRoomRef.current;
-    if (!socket?.connected) return;
+    if (transport.getStatus() !== "connected") return;
 
     if (!isTypingRef.current || typingRoomRef.current !== room) {
       stopTyping();
-      socket.emit("typing_start", { room });
+      transport.emit("typing_start", { room });
       isTypingRef.current = true;
       typingRoomRef.current = room;
     }

@@ -6,7 +6,7 @@ import { routableSections, swipeIgnoredTargets } from "../constants/chatConfig.j
 
 const mobileSections = ["rooms", "dms", "friends", "notifications", "profile"];
 
-export default function usePageNavigation({ chat, currentUserId }) {
+export default function usePageNavigation({ chat, currentUserId, transport }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeSection, setActiveSection] = useState(() => {
     const requested = searchParams.get("section");
@@ -112,9 +112,10 @@ export default function usePageNavigation({ chat, currentUserId }) {
   }
 
   function handleShowMembers() {
-    const socket = chat.socketRef.current;
     const room = chat.activeRoomRef.current;
-    if (socket?.connected && room) socket.emit("request_members", { room });
+    if (transport.getStatus() === "connected" && room) {
+      transport.emit("request_members", { room });
+    }
     setActiveSection("members");
   }
 

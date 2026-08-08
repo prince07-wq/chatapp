@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Check,
   CheckCheck,
@@ -32,6 +33,53 @@ const MORE_REACTION_OPTIONS = [
   "😀", "😊", "😍", "🤔", "👏", "🙏", "🎉", "💯", "✅",
   "👀", "🤝", "🤯", "🥳", "😡", "🤗", "💀", "🚀", "💔",
 ];
+
+const MENU_GAP = 4;
+const VIEWPORT_MARGIN = 8;
+
+function getMenuPosition(anchorRect, menuRect, alignRight) {
+  const width = menuRect?.width || 176;
+  const height = menuRect?.height || 180;
+  const preferredLeft = alignRight ? anchorRect.right - width : anchorRect.left;
+  const left = Math.min(
+    Math.max(preferredLeft, VIEWPORT_MARGIN),
+    Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN),
+  );
+  const below = anchorRect.bottom + MENU_GAP;
+  const above = anchorRect.top - height - MENU_GAP;
+  const preferredTop = below + height <= window.innerHeight - VIEWPORT_MARGIN
+    ? below
+    : above;
+  const top = Math.min(
+    Math.max(preferredTop, VIEWPORT_MARGIN),
+    Math.max(VIEWPORT_MARGIN, window.innerHeight - height - VIEWPORT_MARGIN),
+  );
+  return { left, top };
+}
+
+function getReactionPickerPosition(menuRect, pickerRect, preferLeft) {
+  const width = pickerRect?.width || 208;
+  const height = pickerRect?.height || 184;
+  const leftSide = menuRect.left - width - VIEWPORT_MARGIN;
+  const rightSide = menuRect.right + VIEWPORT_MARGIN;
+  const preferredLeft = preferLeft ? leftSide : rightSide;
+  const alternateLeft = preferLeft ? rightSide : leftSide;
+  const fits = (left) =>
+    left >= VIEWPORT_MARGIN && left + width <= window.innerWidth - VIEWPORT_MARGIN;
+  const left = fits(preferredLeft)
+    ? preferredLeft
+    : fits(alternateLeft)
+      ? alternateLeft
+      : Math.min(
+          Math.max(preferredLeft, VIEWPORT_MARGIN),
+          Math.max(VIEWPORT_MARGIN, window.innerWidth - width - VIEWPORT_MARGIN),
+        );
+  const top = Math.min(
+    Math.max(menuRect.top, VIEWPORT_MARGIN),
+    Math.max(VIEWPORT_MARGIN, window.innerHeight - height - VIEWPORT_MARGIN),
+  );
+  return { left, top };
+}
 
 function isSingleEmoji(value) {
   const emoji = value.trim();
@@ -210,16 +258,55 @@ function MessageBubble({
   const [moreReactionsOpen, setMoreReactionsOpen] = useState(false);
   const [customEmoji, setCustomEmoji] = useState("");
   const [quoteUnavailable, setQuoteUnavailable] = useState(false);
-  const menuRef = useRef(null);
+  const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
+  const [morePickerPosition, setMorePickerPosition] = useState({ left: 0, top: 0 });
+  const actionButtonRef = useRef(null);
+  const menuPanelRef = useRef(null);
+  const morePickerRef = useRef(null);
   const imageAttachment = attachment?.mimeType?.startsWith("image/");
   const audioAttachment = attachment?.mimeType?.startsWith("audio/");
   const visibleReactions = reactions.slice(0, 2);
   const hiddenReactionCount = Math.max(0, reactions.length - 2);
 
+  const updateMenuPosition = useCallback(() => {
+    const anchorRect = actionButtonRef.current?.getBoundingClientRect();
+    if (!anchorRect) return;
+    const next = getMenuPosition(
+      anchorRect,
+      menuPanelRef.current?.getBoundingClientRect(),
+      sent,
+    );
+    setMenuPosition((current) =>
+      current.left === next.left && current.top === next.top ? current : next,
+    );
+  }, [sent]);
+
+  const updateMorePickerPosition = useCallback(() => {
+    const menuRect = menuPanelRef.current?.getBoundingClientRect();
+    if (!menuRect) return;
+    const next = getReactionPickerPosition(
+      menuRect,
+      morePickerRef.current?.getBoundingClientRect(),
+      sent,
+    );
+    setMorePickerPosition((current) =>
+      current.left === next.left && current.top === next.top ? current : next,
+    );
+  }, [sent]);
+
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    updateMenuPosition();
+    if (moreReactionsOpen) updateMorePickerPosition();
+  }, [menuOpen, menuPosition.left, menuPosition.top, moreReactionsOpen, reactionPickerOpen, updateMenuPosition, updateMorePickerPosition]);
+
   useEffect(() => {
     if (!menuOpen) return undefined;
     function closeMenu(event) {
-      if (!menuRef.current?.contains(event.target)) {
+      if (
+        !actionButtonRef.current?.contains(event.target) &&
+        !menuPanelRef.current?.contains(event.target)
+      ) {
         setMenuOpen(false);
         setReactionPickerOpen(false);
         setMoreReactionsOpen(false);
@@ -231,13 +318,31 @@ function MessageBubble({
       setReactionPickerOpen(false);
       setMoreReactionsOpen(false);
     }
+    window.addEventListener("resize", updateMenuPosition);
+    window.addEventListener("resize", updateMorePickerPosition);
+    window.addEventListener("scroll", updateMenuPosition, true);
+    window.addEventListener("scroll", updateMorePickerPosition, true);
     document.addEventListener("mousedown", closeMenu);
     document.addEventListener("keydown", handleEscape);
     return () => {
+      window.removeEventListener("resize", updateMenuPosition);
+      window.removeEventListener("resize", updateMorePickerPosition);
+      window.removeEventListener("scroll", updateMenuPosition, true);
+      window.removeEventListener("scroll", updateMorePickerPosition, true);
       document.removeEventListener("mousedown", closeMenu);
       document.removeEventListener("keydown", handleEscape);
     };
-  }, [menuOpen]);
+  }, [menuOpen, updateMenuPosition, updateMorePickerPosition]);
+
+  function toggleMenu() {
+    if (menuOpen) {
+      setMenuOpen(false);
+      return;
+    }
+    const anchorRect = actionButtonRef.current?.getBoundingClientRect();
+    if (anchorRect) setMenuPosition(getMenuPosition(anchorRect, null, sent));
+    setMenuOpen(true);
+  }
 
   function selectReaction(emoji) {
     setMenuOpen(false);
@@ -263,18 +368,23 @@ function MessageBubble({
       ].join(" ")}
     >
       {(onReply || onReact || (sent && (onEdit || onDeleteForMe || onDeleteForEveryone))) && (
-        <div ref={menuRef} className="relative mr-1 self-start">
+        <div className="relative mr-1 self-start">
           <button
+            ref={actionButtonRef}
             type="button"
             aria-label="Message actions"
             aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
+            onClick={toggleMenu}
             className="flex h-8 w-8 items-center justify-center rounded-[10px] text-[#969AA1] opacity-0 transition-opacity hover:bg-black/[0.04] focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3B82F6]/30 group-hover:opacity-100 dark:hover:bg-white/[0.06]"
           >
             <MoreHorizontal size={17} />
           </button>
-          {menuOpen && (
-            <div className={`absolute top-9 z-20 w-44 rounded-[12px] border border-[#E6E8E5] bg-white p-1.5 text-left shadow-lg dark:border-white/[0.08] dark:bg-[#20242B] ${sent ? "right-0" : "left-0"}`}>
+          {menuOpen && createPortal(
+            <div
+              ref={menuPanelRef}
+              className="fixed z-[100] w-44 rounded-[12px] border border-[#E6E8E5] bg-white p-1.5 text-left shadow-lg dark:border-white/[0.08] dark:bg-[#20242B]"
+              style={menuPosition}
+            >
               {onReact && (
                 <>
                   <button type="button" onClick={() => setReactionPickerOpen((open) => !open)} className="flex w-full items-center gap-2 rounded-[8px] px-2.5 py-2 text-[12px] font-medium text-[#555B63] hover:bg-[#F7F7F5] dark:text-[#C5C9CF] dark:hover:bg-white/[0.06]">
@@ -306,12 +416,11 @@ function MessageBubble({
                   )}
                   {reactionPickerOpen && moreReactionsOpen && (
                     <div
+                      ref={morePickerRef}
                       role="dialog"
                       aria-label="More emoji reactions"
-                      className={[
-                        "absolute top-0 z-30 w-52 rounded-[12px] border border-[#E6E8E5] bg-white p-2 shadow-xl dark:border-white/[0.08] dark:bg-[#20242B]",
-                        sent ? "right-full mr-2" : "left-full ml-2",
-                      ].join(" ")}
+                      className="fixed z-[110] w-52 rounded-[12px] border border-[#E6E8E5] bg-white p-2 shadow-xl dark:border-white/[0.08] dark:bg-[#20242B]"
+                      style={morePickerPosition}
                     >
                       <div className="grid grid-cols-6 gap-1">
                         {MORE_REACTION_OPTIONS.map((emoji) => (
@@ -375,7 +484,8 @@ function MessageBubble({
                   <Trash2 size={14} /> Delete for everyone
                 </button>
               )}
-            </div>
+            </div>,
+            document.body,
           )}
         </div>
       )}

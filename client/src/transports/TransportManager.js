@@ -21,6 +21,10 @@ export default class TransportManager {
     this.activeTransport.disconnect();
   }
 
+  reconnect() {
+    this.activeTransport.reconnect();
+  }
+
   emit(event, payload) {
     this.activeTransport.emit(event, payload);
   }
@@ -35,6 +39,10 @@ export default class TransportManager {
 
   getStatus() {
     return this.activeTransport.getStatus();
+  }
+
+  getConnectionId() {
+    return this.activeTransport.getConnectionId();
   }
 
   joinConversation(room) {

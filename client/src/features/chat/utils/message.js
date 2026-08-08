@@ -27,6 +27,43 @@ export function normalizeMessageReactions(value) {
   }, []);
 }
 
+export function updateReactionForUser(value, userId, emoji, action = "set") {
+  const normalizedUserId = userId == null ? null : String(userId);
+  const reactions = normalizeMessageReactions(value);
+  if (!normalizedUserId || !emoji) return reactions;
+
+  const previousReaction = reactions.find((reaction) =>
+    reaction.userIds.includes(normalizedUserId),
+  );
+  if (action === "remove" && previousReaction?.emoji !== emoji) return reactions;
+  if (action === "set" && previousReaction?.emoji === emoji) return reactions;
+
+  const previousUser = previousReaction?.users?.find(
+    (user) => String(user.userId) === normalizedUserId,
+  ) ?? { userId: normalizedUserId, username: "Unknown user", profileImage: "" };
+  const next = reactions
+    .map((reaction) => {
+      const userIds = reaction.userIds.filter((id) => id !== normalizedUserId);
+      if (!userIds.length) return null;
+      return {
+        ...reaction,
+        userIds,
+        users: reaction.users.filter((user) => String(user.userId) !== normalizedUserId),
+      };
+    })
+    .filter(Boolean);
+
+  if (action !== "set") return next;
+  const target = next.find((reaction) => reaction.emoji === emoji);
+  if (target) {
+    target.userIds = [...target.userIds, normalizedUserId];
+    target.users = [...target.users, previousUser];
+  } else {
+    next.push({ emoji, userIds: [normalizedUserId], users: [previousUser] });
+  }
+  return next;
+}
+
 export function normalizeSocketMessage(incomingMessage, currentUserId) {
   const message = incomingMessage?.message && typeof incomingMessage.message === "object" ? incomingMessage.message : incomingMessage;
   const text = message?.content ?? message?.text ?? (typeof incomingMessage?.message === "string" ? incomingMessage.message : "");

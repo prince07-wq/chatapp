@@ -1,5 +1,4 @@
 import {
-  getNewestReactionState,
   latestMessageStatus,
   MESSAGE_STATUS_RANK,
   normalizeMessageReactions,
@@ -100,7 +99,11 @@ export default function useMessageSocketEvents({
     chat.setChatMessages((current) =>
       current.map((message) =>
         message.id === normalizedId
-          ? { ...message, ...getNewestReactionState(message, reactionState) }
+          ? {
+              ...message,
+              reactions: reactionState.reactions,
+              reactionsUpdatedAt: reactionsUpdatedAt ?? message.reactionsUpdatedAt,
+            }
           : message,
       ),
     );
@@ -123,7 +126,12 @@ export default function useMessageSocketEvents({
         activityTime >= latestActivityTime
       ) latestReaction = null;
       const latestMessage = summary.latestMessage?.id === normalizedId
-        ? { ...summary.latestMessage, ...getNewestReactionState(summary.latestMessage, reactionState) }
+        ? {
+            ...summary.latestMessage,
+            reactions: reactionState.reactions,
+            reactionsUpdatedAt:
+              reactionsUpdatedAt ?? summary.latestMessage.reactionsUpdatedAt,
+          }
         : summary.latestMessage;
       if (latestMessage === summary.latestMessage && latestReaction === summary.latestReaction) return summaries;
       return { ...summaries, [room]: { ...summary, latestMessage, latestReaction } };
